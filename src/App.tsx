@@ -12,6 +12,7 @@ import Dashboard from "./pages/Dashboard";
 import InvoicesPage from "./pages/InvoicesPage";
 import InvoiceCreatePage from "./pages/InvoiceCreatePage";
 import InvoiceDetailPage from "./pages/InvoiceDetailPage";
+import InvoiceEditPage from "./pages/InvoiceEditPage";
 import InventoryPage from "./pages/InventoryPage";
 import PartiesPage from "./pages/PartiesPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
@@ -52,6 +53,9 @@ function AppRoutes() {
       } />
       <Route path="/invoices/:id" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><InvoiceDetailPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
+      } />
+      <Route path="/invoices/:id/edit" element={
+        <ProtectedRoute><RequireBusiness><DashboardLayout><InvoiceEditPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/purchases" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><PlaceholderPage title="Purchases" /></DashboardLayout></RequireBusiness></ProtectedRoute>

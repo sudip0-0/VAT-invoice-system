@@ -1,9 +1,12 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Printer, Download, CreditCard } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowLeft, Printer, CreditCard, Pencil, Ban } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useInvoiceDetail, useInvoicePayments } from '@/hooks/useInvoices';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { useInvoiceDetail, useInvoicePayments, useInvoices } from '@/hooks/useInvoices';
 import { useBusiness } from '@/contexts/BusinessContext';
 import { useToast } from '@/hooks/use-toast';
 import { formatNPR } from '@/lib/nepal-format';
@@ -17,12 +20,12 @@ export default function InvoiceDetailPage() {
   const { business } = useBusiness();
   const { data: invoice, isLoading } = useInvoiceDetail(id);
   const { payments, recordPayment } = useInvoicePayments(id);
+  const { cancelInvoice } = useInvoices();
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
 
-  const handlePrint = () => {
-    window.print();
-  };
+  const handlePrint = () => window.print();
 
   const handlePayment = async (data: Record<string, any>) => {
     try {
@@ -34,21 +37,28 @@ export default function InvoiceDetailPage() {
     }
   };
 
-  if (isLoading) {
-    return <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>;
-  }
+  const handleCancel = async () => {
+    try {
+      await cancelInvoice.mutateAsync(id!);
+      toast({ title: 'Invoice cancelled' });
+      setCancelOpen(false);
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    }
+  };
 
-  if (!invoice) {
-    return <div className="p-8 text-center text-sm text-muted-foreground">Invoice not found.</div>;
-  }
+  if (isLoading) return <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>;
+  if (!invoice) return <div className="p-8 text-center text-sm text-muted-foreground">Invoice not found.</div>;
 
   const party = invoice.customer || invoice.vendor;
   const partyId = invoice.customer_id || invoice.vendor_id;
   const lineItems = (invoice.invoice_items || []).sort((a, b) => a.sort_order - b.sort_order);
+  const isCancelled = invoice.status === 'cancelled';
+  const canEdit = !isCancelled && invoice.status !== 'paid';
 
   return (
     <div className="space-y-4 animate-fade-in max-w-4xl">
-      {/* Header - hidden when printing */}
+      {/* Header */}
       <div className="flex items-center gap-3 print:hidden">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/invoices')}>
           <ArrowLeft className="h-4 w-4" />
@@ -56,9 +66,19 @@ export default function InvoiceDetailPage() {
         <h1 className="text-xl font-bold text-foreground">{invoice.invoice_number}</h1>
         <StatusBadge status={invoice.status.toUpperCase()} />
         <div className="ml-auto flex gap-2">
-          {invoice.balance_due > 0 && (
+          {canEdit && (
+            <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => navigate(`/invoices/${id}/edit`)}>
+              <Pencil className="h-3.5 w-3.5" /> Edit
+            </Button>
+          )}
+          {!isCancelled && invoice.balance_due > 0 && (
             <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => setPaymentOpen(true)}>
               <CreditCard className="h-3.5 w-3.5" /> Record Payment
+            </Button>
+          )}
+          {!isCancelled && (
+            <Button size="sm" variant="outline" className="gap-1.5 text-xs text-destructive hover:text-destructive" onClick={() => setCancelOpen(true)}>
+              <Ban className="h-3.5 w-3.5" /> Cancel
             </Button>
           )}
           <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={handlePrint}>
@@ -87,6 +107,7 @@ export default function InvoiceDetailPage() {
             <p className="text-xs text-muted-foreground">Date (AD): {new Date(invoice.issued_date_ad).toLocaleDateString()}</p>
             {invoice.due_date_bs && <p className="text-xs text-muted-foreground">Due: {invoice.due_date_bs}</p>}
             {invoice.vat_period && <p className="text-xs text-muted-foreground">VAT Period: {invoice.vat_period}</p>}
+            {isCancelled && <p className="text-xs font-bold text-destructive mt-1">CANCELLED</p>}
           </div>
         </div>
 
@@ -199,7 +220,7 @@ export default function InvoiceDetailPage() {
         )}
       </div>
 
-      {/* Payments History - hidden when printing */}
+      {/* Payments History */}
       {payments.length > 0 && (
         <div className="rounded-lg border border-border bg-card p-4 print:hidden">
           <h3 className="text-sm font-semibold text-foreground mb-3">Payment History</h3>
@@ -243,6 +264,24 @@ export default function InvoiceDetailPage() {
         onSubmit={handlePayment}
         loading={recordPayment.isPending}
       />
+
+      {/* Cancel Confirmation */}
+      <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Invoice?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will mark invoice <strong>{invoice.invoice_number}</strong> as cancelled. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep Invoice</AlertDialogCancel>
+            <AlertDialogAction onClick={handleCancel} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Cancel Invoice
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
