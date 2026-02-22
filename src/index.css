@@ -113,3 +113,14 @@
     background-image: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
   }
 }
+
+@media print {
+  body { background: white !important; }
+  .print\:hidden { display: none !important; }
+  .print\:border-0 { border: 0 !important; }
+  .print\:shadow-none { box-shadow: none !important; }
+  .print\:p-0 { padding: 0 !important; }
+  .print\:bg-transparent { background: transparent !important; }
+  .print\:border { border: 1px solid #e5e7eb !important; }
+  .print\:border-border { border-color: #e5e7eb !important; }
+}

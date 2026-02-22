@@ -5,10 +5,15 @@ import type { Tables, TablesInsert } from '@/integrations/supabase/types';
 
 export type Invoice = Tables<'invoices'>;
 export type InvoiceItem = Tables<'invoice_items'>;
+export type Payment = Tables<'payments'>;
 
 export interface InvoiceWithParty extends Invoice {
   customer: { name: string } | null;
   vendor: { name: string } | null;
+}
+
+export interface InvoiceDetail extends InvoiceWithParty {
+  invoice_items: InvoiceItem[];
 }
 
 export function useInvoices() {
@@ -58,7 +63,6 @@ export function useInvoices() {
         if (itemsErr) throw itemsErr;
       }
 
-      // Increment next_invoice_num
       const { data: biz } = await supabase
         .from('businesses')
         .select('next_invoice_num')
@@ -79,6 +83,87 @@ export function useInvoices() {
   });
 
   return { invoices: query.data || [], isLoading: query.isLoading, createInvoice };
+}
+
+export function useInvoiceDetail(id: string | undefined) {
+  const { business } = useBusiness();
+
+  return useQuery({
+    queryKey: ['invoice', id],
+    enabled: !!id && !!business?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('*, customer:parties!invoices_customer_id_fkey(name, phone, email, address, city, pan_number), vendor:parties!invoices_vendor_id_fkey(name, phone, email, address, city, pan_number), invoice_items(*)')
+        .eq('id', id!)
+        .single();
+      if (error) throw error;
+      return data as InvoiceDetail;
+    },
+  });
+}
+
+export function useInvoicePayments(invoiceId: string | undefined) {
+  const { business } = useBusiness();
+  const qc = useQueryClient();
+
+  const query = useQuery({
+    queryKey: ['payments', invoiceId],
+    enabled: !!invoiceId && !!business?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('invoice_id', invoiceId!)
+        .eq('business_id', business!.id)
+        .order('payment_date_ad', { ascending: false });
+      if (error) throw error;
+      return data as Payment[];
+    },
+  });
+
+  const recordPayment = useMutation({
+    mutationFn: async (payment: Omit<TablesInsert<'payments'>, 'business_id'>) => {
+      const { data, error } = await supabase
+        .from('payments')
+        .insert({ ...payment, business_id: business!.id })
+        .select()
+        .single();
+      if (error) throw error;
+
+      // Update invoice paid_amount and balance_due
+      if (payment.invoice_id) {
+        const { data: inv } = await supabase
+          .from('invoices')
+          .select('paid_amount, total_amount')
+          .eq('id', payment.invoice_id)
+          .single();
+        if (inv) {
+          const newPaid = Number(inv.paid_amount) + Number(payment.amount);
+          const newBalance = Number(inv.total_amount) - newPaid;
+          const newStatus = newBalance <= 0 ? 'paid' : newPaid > 0 ? 'partially_paid' : undefined;
+          await supabase
+            .from('invoices')
+            .update({
+              paid_amount: newPaid,
+              balance_due: Math.max(0, newBalance),
+              ...(newStatus ? { status: newStatus } : {}),
+            })
+            .eq('id', payment.invoice_id);
+        }
+      }
+
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['payments', invoiceId] });
+      qc.invalidateQueries({ queryKey: ['invoice', invoiceId] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+
+  return { payments: query.data || [], isLoading: query.isLoading, recordPayment };
 }
 
 export function useTaxRates() {
