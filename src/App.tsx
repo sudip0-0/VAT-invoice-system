@@ -10,6 +10,7 @@ import RequireBusiness from "./components/RequireBusiness";
 import DashboardLayout from "./components/DashboardLayout";
 import Dashboard from "./pages/Dashboard";
 import InvoicesPage from "./pages/InvoicesPage";
+import InvoiceCreatePage from "./pages/InvoiceCreatePage";
 import InventoryPage from "./pages/InventoryPage";
 import PartiesPage from "./pages/PartiesPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
@@ -42,6 +43,9 @@ function AppRoutes() {
       } />
       <Route path="/invoices" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><InvoicesPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
+      } />
+      <Route path="/invoices/new" element={
+        <ProtectedRoute><RequireBusiness><DashboardLayout><InvoiceCreatePage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/purchases" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><PlaceholderPage title="Purchases" /></DashboardLayout></RequireBusiness></ProtectedRoute>
