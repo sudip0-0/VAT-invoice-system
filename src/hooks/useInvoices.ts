@@ -82,7 +82,65 @@ export function useInvoices() {
     },
   });
 
-  return { invoices: query.data || [], isLoading: query.isLoading, createInvoice };
+  const updateInvoice = useMutation({
+    mutationFn: async ({
+      id,
+      invoice,
+      items,
+    }: {
+      id: string;
+      invoice: Partial<TablesInsert<'invoices'>>;
+      items?: Omit<TablesInsert<'invoice_items'>, 'invoice_id'>[];
+    }) => {
+      const { error: invErr } = await supabase
+        .from('invoices')
+        .update({ ...invoice, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (invErr) throw invErr;
+
+      if (items !== undefined) {
+        // Delete existing items and re-insert
+        const { error: delErr } = await supabase
+          .from('invoice_items')
+          .delete()
+          .eq('invoice_id', id);
+        if (delErr) throw delErr;
+
+        if (items.length > 0) {
+          const { error: itemsErr } = await supabase.from('invoice_items').insert(
+            items.map((item, idx) => ({
+              ...item,
+              invoice_id: id,
+              sort_order: idx,
+            }))
+          );
+          if (itemsErr) throw itemsErr;
+        }
+      }
+
+      return id;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: key });
+    },
+  });
+
+  const cancelInvoice = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('invoices')
+        .update({ status: 'cancelled' as any, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: (id) => {
+      qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: ['invoice', id] });
+    },
+  });
+
+  return { invoices: query.data || [], isLoading: query.isLoading, createInvoice, updateInvoice, cancelInvoice };
 }
 
 export function useInvoiceDetail(id: string | undefined) {
