@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 
+
 const businessTypes = [
   { value: 'kirana', label: 'Kirana / General Store' },
   { value: 'wholesale', label: 'Wholesale' },
@@ -34,10 +35,13 @@ export default function BusinessSetupPage() {
     setLoading(true);
 
     try {
-      // Create business
-      const { data: business, error: bizError } = await supabase
+      const businessId = crypto.randomUUID();
+
+      // Create business (without .select() to avoid SELECT RLS check before business_users exists)
+      const { error: bizError } = await supabase
         .from('businesses')
         .insert({
+          id: businessId,
           name,
           type: type as any,
           address,
@@ -45,9 +49,7 @@ export default function BusinessSetupPage() {
           phone,
           pan_number: panNumber || null,
           is_vat_registered: isVat,
-        })
-        .select()
-        .single();
+        });
 
       if (bizError) throw bizError;
 
@@ -55,7 +57,7 @@ export default function BusinessSetupPage() {
       const { error: buError } = await supabase
         .from('business_users')
         .insert({
-          business_id: business.id,
+          business_id: businessId,
           user_id: user.id,
           role: 'owner' as any,
         });
@@ -65,14 +67,14 @@ export default function BusinessSetupPage() {
       // Update profile with active business
       await supabase
         .from('profiles')
-        .update({ active_business_id: business.id })
+        .update({ active_business_id: businessId })
         .eq('user_id', user.id);
 
       // Create default tax rates
       await supabase.from('tax_rates').insert([
-        { business_id: business.id, name: 'VAT 13%', type: 'vat_13' as any, rate: 13.0, is_default: true },
-        { business_id: business.id, name: 'Exempt', type: 'exempt' as any, rate: 0, is_default: false },
-        { business_id: business.id, name: 'Zero Rated', type: 'zero_rated' as any, rate: 0, is_default: false },
+        { business_id: businessId, name: 'VAT 13%', type: 'vat_13' as any, rate: 13.0, is_default: true },
+        { business_id: businessId, name: 'Exempt', type: 'exempt' as any, rate: 0, is_default: false },
+        { business_id: businessId, name: 'Zero Rated', type: 'zero_rated' as any, rate: 0, is_default: false },
       ]);
 
       navigate('/');
