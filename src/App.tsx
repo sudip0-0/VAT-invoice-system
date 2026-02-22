@@ -16,6 +16,7 @@ import InventoryPage from "./pages/InventoryPage";
 import PartiesPage from "./pages/PartiesPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
 import ReportsPage from "./pages/ReportsPage";
+import SettingsPage from "./pages/SettingsPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
@@ -68,7 +69,7 @@ function AppRoutes() {
         <ProtectedRoute><RequireBusiness><DashboardLayout><ReportsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/settings" element={
-        <ProtectedRoute><RequireBusiness><DashboardLayout><PlaceholderPage title="Settings" /></DashboardLayout></RequireBusiness></ProtectedRoute>
+        <ProtectedRoute><RequireBusiness><DashboardLayout><SettingsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="*" element={<NotFound />} />
     </Routes>
