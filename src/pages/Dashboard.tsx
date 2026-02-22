@@ -1,40 +1,10 @@
-import { TrendingUp, TrendingDown, IndianRupee, AlertTriangle, Users } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { TrendingUp, TrendingDown, IndianRupee, AlertTriangle } from 'lucide-react';
 import { formatNPR } from '@/lib/nepal-format';
 import { todayBS, getFiscalYear, formatBS } from '@/lib/bs-calendar';
-import { mockDashboardData, mockInvoices } from '@/lib/mock-data';
+import { useDashboardData } from '@/hooks/useDashboard';
 import StatusBadge from '@/components/shared/StatusBadge';
 
-const data = mockDashboardData;
 const today = todayBS();
-
-const kpiCards = [
-  {
-    label: "Today's Sales",
-    value: data.todaySales,
-    icon: TrendingUp,
-    accent: 'success' as const,
-  },
-  {
-    label: 'Total Receivables',
-    value: data.totalReceivables,
-    icon: IndianRupee,
-    accent: 'warning' as const,
-  },
-  {
-    label: 'Total Payables',
-    value: data.totalPayables,
-    icon: TrendingDown,
-    accent: 'destructive' as const,
-  },
-  {
-    label: 'Low Stock Items',
-    value: data.lowStockItems,
-    icon: AlertTriangle,
-    accent: 'warning' as const,
-    isCount: true,
-  },
-];
 
 const accentColorMap = {
   success: 'text-success',
@@ -49,9 +19,17 @@ const accentBgMap = {
 };
 
 export default function Dashboard() {
+  const { data, isLoading } = useDashboardData();
+
+  const kpiCards = [
+    { label: "Today's Sales", value: data?.todaySales ?? 0, icon: TrendingUp, accent: 'success' as const },
+    { label: 'Total Receivables', value: data?.totalReceivables ?? 0, icon: IndianRupee, accent: 'warning' as const },
+    { label: 'Total Payables', value: data?.totalPayables ?? 0, icon: TrendingDown, accent: 'destructive' as const },
+    { label: 'Low Stock Items', value: data?.lowStockCount ?? 0, icon: AlertTriangle, accent: 'warning' as const, isCount: true },
+  ];
+
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
       <div>
         <h1 className="text-xl font-bold text-foreground">Dashboard</h1>
         <p className="text-sm text-muted-foreground">
@@ -70,56 +48,60 @@ export default function Dashboard() {
               </div>
             </div>
             <p className="text-lg font-bold text-foreground">
-              {kpi.isCount ? kpi.value : formatNPR(kpi.value, { compact: true })}
+              {isLoading ? '—' : kpi.isCount ? kpi.value : formatNPR(kpi.value, { compact: true })}
             </p>
           </div>
         ))}
       </div>
 
-      {/* Chart + Recent Invoices */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Sales chart */}
-        <div className="lg:col-span-2 rounded-lg border border-border bg-card p-4">
-          <h2 className="mb-4 text-sm font-semibold text-foreground">Sales vs Purchases (This Month)</h2>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data.recentSalesData}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                <XAxis dataKey="date" className="text-xs" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
-                <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}K`} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--card))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '8px',
-                    fontSize: '12px',
-                  }}
-                  formatter={(value: number) => formatNPR(value)}
-                />
-                <Bar dataKey="sales" fill="hsl(var(--chart-3))" radius={[3, 3, 0, 0]} name="Sales" />
-                <Bar dataKey="purchases" fill="hsl(var(--chart-4))" radius={[3, 3, 0, 0]} name="Purchases" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
+      {/* Recent Invoices + Low Stock */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Recent Invoices */}
         <div className="rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 text-sm font-semibold text-foreground">Recent Invoices</h2>
-          <div className="space-y-3">
-            {mockInvoices.slice(0, 5).map((inv) => (
-              <div key={inv.id} className="flex items-center justify-between text-xs">
-                <div>
-                  <p className="font-medium text-foreground">{inv.customerName || inv.vendorName}</p>
-                  <p className="text-muted-foreground">{inv.invoiceNumber}</p>
+          {isLoading ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : !data?.recentInvoices.length ? (
+            <p className="text-xs text-muted-foreground">No invoices yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {data.recentInvoices.map((inv) => (
+                <div key={inv.id} className="flex items-center justify-between text-xs">
+                  <div>
+                    <p className="font-medium text-foreground">
+                      {inv.customer?.name || inv.vendor?.name || '—'}
+                    </p>
+                    <p className="text-muted-foreground">{inv.invoice_number}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-medium text-foreground">{formatNPR(inv.total_amount, { showSymbol: false })}</p>
+                    <StatusBadge status={inv.status.toUpperCase()} />
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-medium text-foreground">{formatNPR(inv.totalAmount, { showSymbol: false })}</p>
-                  <StatusBadge status={inv.status} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Low Stock Alerts */}
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Low Stock Alerts</h2>
+          {isLoading ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : !data?.lowStockItems.length ? (
+            <p className="text-xs text-muted-foreground">All stock levels are healthy.</p>
+          ) : (
+            <div className="space-y-2">
+              {data.lowStockItems.map((item) => (
+                <div key={item.id} className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-foreground">{item.name}</span>
+                  <span className="text-destructive font-medium">
+                    {item.current_stock} / {item.low_stock_alert}
+                  </span>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -127,20 +109,26 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-lg border border-border bg-card p-4">
           <p className="text-xs text-muted-foreground mb-1">Monthly Sales</p>
-          <p className="text-base font-bold text-foreground">{formatNPR(data.monthSales, { compact: true })}</p>
+          <p className="text-base font-bold text-foreground">
+            {isLoading ? '—' : formatNPR(data?.monthSales ?? 0, { compact: true })}
+          </p>
         </div>
         <div className="rounded-lg border border-border bg-card p-4">
           <p className="text-xs text-muted-foreground mb-1">Monthly Purchases</p>
-          <p className="text-base font-bold text-foreground">{formatNPR(data.monthPurchases, { compact: true })}</p>
+          <p className="text-base font-bold text-foreground">
+            {isLoading ? '—' : formatNPR(data?.monthPurchases ?? 0, { compact: true })}
+          </p>
         </div>
         <div className="rounded-lg border border-border bg-card p-4">
           <p className="text-xs text-muted-foreground mb-1">Total Customers</p>
-          <p className="text-base font-bold text-foreground">{data.totalCustomers}</p>
+          <p className="text-base font-bold text-foreground">
+            {isLoading ? '—' : data?.totalCustomers ?? 0}
+          </p>
         </div>
         <div className="rounded-lg border border-border bg-card p-4">
           <p className="text-xs text-muted-foreground mb-1">Net This Month</p>
-          <p className={`text-base font-bold ${data.monthSales - data.monthPurchases < 0 ? 'text-destructive' : 'text-success'}`}>
-            {formatNPR(data.monthSales - data.monthPurchases, { compact: true })}
+          <p className={`text-base font-bold ${(data?.monthSales ?? 0) - (data?.monthPurchases ?? 0) < 0 ? 'text-destructive' : 'text-success'}`}>
+            {isLoading ? '—' : formatNPR((data?.monthSales ?? 0) - (data?.monthPurchases ?? 0), { compact: true })}
           </p>
         </div>
       </div>
