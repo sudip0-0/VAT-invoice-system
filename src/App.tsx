@@ -15,6 +15,7 @@ import InvoiceDetailPage from "./pages/InvoiceDetailPage";
 import InventoryPage from "./pages/InventoryPage";
 import PartiesPage from "./pages/PartiesPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
+import ReportsPage from "./pages/ReportsPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
@@ -64,7 +65,7 @@ function AppRoutes() {
         <ProtectedRoute><RequireBusiness><DashboardLayout><PartiesPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/reports" element={
-        <ProtectedRoute><RequireBusiness><DashboardLayout><PlaceholderPage title="Reports" /></DashboardLayout></RequireBusiness></ProtectedRoute>
+        <ProtectedRoute><RequireBusiness><DashboardLayout><ReportsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/settings" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><PlaceholderPage title="Settings" /></DashboardLayout></RequireBusiness></ProtectedRoute>
