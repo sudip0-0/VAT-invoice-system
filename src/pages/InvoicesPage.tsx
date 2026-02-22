@@ -97,7 +97,7 @@ export default function InvoicesPage() {
               </thead>
               <tbody>
                 {filtered.map((inv) => (
-                  <tr key={inv.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors cursor-pointer">
+                  <tr key={inv.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors cursor-pointer" onClick={() => navigate(`/invoices/${inv.id}`)}>
                     <td className="px-4 py-3">
                       <span className="font-medium text-foreground">{inv.invoice_number}</span>
                       {inv.is_vat_invoice && <span className="ml-1.5 text-[10px] text-primary font-medium">VAT</span>}
