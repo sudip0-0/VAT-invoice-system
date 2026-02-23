@@ -12,7 +12,8 @@ import { useParties } from '@/hooks/useParties';
 import { useItems } from '@/hooks/useItems';
 import { useBusiness } from '@/contexts/BusinessContext';
 import { formatNPR } from '@/lib/nepal-format';
-import { adToBS, formatBSShort, getVATPeriod } from '@/lib/bs-calendar';
+import { type BSDate, adToBS, bsToAD, formatBSShort, getVATPeriod, parseBSShort } from '@/lib/bs-calendar';
+import BSDatePicker from '@/components/shared/BSDatePicker';
 
 interface LineItem {
   key: string;
@@ -66,7 +67,9 @@ export default function InvoiceEditPage() {
   const [initialized, setInitialized] = useState(false);
   const [invoiceType, setInvoiceType] = useState<'sale' | 'purchase'>('sale');
   const [partyId, setPartyId] = useState('');
+  const [issuedDateBs, setIssuedDateBs] = useState<BSDate | null>(null);
   const [issuedDateAd, setIssuedDateAd] = useState('');
+  const [dueDateBs, setDueDateBs] = useState<BSDate | null>(null);
   const [dueDateAd, setDueDateAd] = useState('');
   const [isVat, setIsVat] = useState(false);
   const [notes, setNotes] = useState('');
@@ -77,7 +80,11 @@ export default function InvoiceEditPage() {
     if (invoice && !initialized) {
       setInvoiceType(invoice.type as 'sale' | 'purchase');
       setPartyId(invoice.customer_id || invoice.vendor_id || '');
+      const parsedIssuedBs = parseBSShort(invoice.issued_date_bs);
+      if (parsedIssuedBs) setIssuedDateBs(parsedIssuedBs);
       setIssuedDateAd(invoice.issued_date_ad ? new Date(invoice.issued_date_ad).toISOString().slice(0, 10) : '');
+      const parsedDueBs = invoice.due_date_bs ? parseBSShort(invoice.due_date_bs) : null;
+      if (parsedDueBs) setDueDateBs(parsedDueBs);
       setDueDateAd(invoice.due_date_ad ? new Date(invoice.due_date_ad).toISOString().slice(0, 10) : '');
       setIsVat(invoice.is_vat_invoice);
       setNotes(invoice.notes || '');
@@ -138,16 +145,9 @@ export default function InvoiceEditPage() {
     return { subTotal, discountAmount, taxableAmount, vatAmount, totalAmount };
   }, [lines]);
 
-  const issuedBs = useMemo(() => {
-    try { return formatBSShort(adToBS(new Date(issuedDateAd))); }
-    catch { return ''; }
-  }, [issuedDateAd]);
+  const issuedBs = issuedDateBs ? formatBSShort(issuedDateBs) : '';
 
-  const dueBs = useMemo(() => {
-    if (!dueDateAd) return null;
-    try { return formatBSShort(adToBS(new Date(dueDateAd))); }
-    catch { return null; }
-  }, [dueDateAd]);
+  const dueBs = dueDateBs ? formatBSShort(dueDateBs) : null;
 
   const handleSave = async (status: 'draft' | 'issued') => {
     if (!partyId) { toast({ title: 'Select a party', variant: 'destructive' }); return; }
@@ -243,14 +243,29 @@ export default function InvoiceEditPage() {
             </Select>
           </div>
           <div>
-            <Label className="text-xs">Issue Date (AD)</Label>
-            <Input type="date" value={issuedDateAd} onChange={(e) => setIssuedDateAd(e.target.value)} className="h-9 text-sm" />
-            {issuedBs && <span className="text-[10px] text-muted-foreground">BS: {issuedBs}</span>}
+            <Label className="text-xs">Issue Date (BS)</Label>
+            <BSDatePicker
+              value={issuedDateBs}
+              onChange={(bs, ad) => {
+                setIssuedDateBs(bs);
+                setIssuedDateAd(ad.toISOString().slice(0, 10));
+              }}
+              className="w-full"
+            />
+            {issuedDateAd && <span className="text-[10px] text-muted-foreground">AD: {issuedDateAd}</span>}
           </div>
           <div>
-            <Label className="text-xs">Due Date (AD)</Label>
-            <Input type="date" value={dueDateAd} onChange={(e) => setDueDateAd(e.target.value)} className="h-9 text-sm" />
-            {dueBs && <span className="text-[10px] text-muted-foreground">BS: {dueBs}</span>}
+            <Label className="text-xs">Due Date (BS)</Label>
+            <BSDatePicker
+              value={dueDateBs}
+              onChange={(bs, ad) => {
+                setDueDateBs(bs);
+                setDueDateAd(ad.toISOString().slice(0, 10));
+              }}
+              placeholder="Optional"
+              className="w-full"
+            />
+            {dueBs && <span className="text-[10px] text-muted-foreground">AD: {dueDateAd}</span>}
           </div>
         </div>
         {business?.is_vat_registered && (
