@@ -15,7 +15,8 @@ import InvoiceDetailPage from "./pages/InvoiceDetailPage";
 import InvoiceEditPage from "./pages/InvoiceEditPage";
 import InventoryPage from "./pages/InventoryPage";
 import PartiesPage from "./pages/PartiesPage";
-import PlaceholderPage from "./pages/PlaceholderPage";
+import QuotationsPage from "./pages/QuotationsPage";
+import QuotationCreatePage from "./pages/QuotationCreatePage";
 import PurchasesPage from "./pages/PurchasesPage";
 import PurchaseCreatePage from "./pages/PurchaseCreatePage";
 import ReportsPage from "./pages/ReportsPage";
@@ -66,7 +67,10 @@ function AppRoutes() {
         <ProtectedRoute><RequireBusiness><DashboardLayout><PurchaseCreatePage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/quotations" element={
-        <ProtectedRoute><RequireBusiness><DashboardLayout><PlaceholderPage title="Quotations" /></DashboardLayout></RequireBusiness></ProtectedRoute>
+        <ProtectedRoute><RequireBusiness><DashboardLayout><QuotationsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
+      } />
+      <Route path="/quotations/new" element={
+        <ProtectedRoute><RequireBusiness><DashboardLayout><QuotationCreatePage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/inventory" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><InventoryPage /></DashboardLayout></RequireBusiness></ProtectedRoute>

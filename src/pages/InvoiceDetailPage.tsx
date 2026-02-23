@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Printer, CreditCard, Pencil, Ban } from 'lucide-react';
+import { ArrowLeft, Printer, CreditCard, Pencil, Ban, FileOutput } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -22,7 +22,7 @@ export default function InvoiceDetailPage() {
   const { business } = useBusiness();
   const { data: invoice, isLoading } = useInvoiceDetail(id);
   const { payments, recordPayment } = useInvoicePayments(id);
-  const { cancelInvoice } = useInvoices();
+  const { cancelInvoice, createInvoice } = useInvoices();
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
@@ -64,23 +64,76 @@ export default function InvoiceDetailPage() {
   const lineItems = (invoice.invoice_items || []).sort((a, b) => a.sort_order - b.sort_order);
   const isCancelled = invoice.status === 'cancelled';
   const canEdit = !isCancelled && invoice.status !== 'paid';
+  const isQuotation = invoice.type === 'quotation';
+  const backPath = isQuotation ? '/quotations' : '/invoices';
+
+  const handleConvertToInvoice = async () => {
+    try {
+      const newId = await createInvoice.mutateAsync({
+        invoice: {
+          invoice_number: `${business?.invoice_prefix || 'INV'}-${String(business?.next_invoice_num || 1).padStart(4, '0')}`,
+          type: 'sale',
+          status: 'draft',
+          customer_id: invoice.customer_id,
+          vendor_id: null,
+          buyer_pan: invoice.buyer_pan,
+          is_vat_invoice: invoice.is_vat_invoice,
+          issued_date_ad: new Date().toISOString().slice(0, 10),
+          issued_date_bs: invoice.issued_date_bs,
+          due_date_ad: invoice.due_date_ad,
+          due_date_bs: invoice.due_date_bs,
+          vat_period: invoice.vat_period,
+          sub_total: invoice.sub_total,
+          discount_amount: invoice.discount_amount,
+          taxable_amount: invoice.taxable_amount,
+          vat_amount: invoice.vat_amount,
+          total_amount: invoice.total_amount,
+          balance_due: invoice.total_amount,
+          notes: invoice.notes,
+          reference_number: invoice.invoice_number,
+        },
+        items: lineItems.map((l) => ({
+          item_id: l.item_id,
+          name: l.name,
+          unit: l.unit,
+          quantity: l.quantity,
+          rate: l.rate,
+          discount_pct: l.discount_pct,
+          discount_amt: l.discount_amt,
+          vat_rate: l.vat_rate,
+          taxable_amount: l.taxable_amount,
+          vat_amount: l.vat_amount,
+          total_amount: l.total_amount,
+        })),
+      });
+      toast({ title: 'Invoice created from quotation' });
+      navigate(`/invoices/${newId}/edit`);
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    }
+  };
 
   return (
     <div className="space-y-4 animate-fade-in max-w-4xl">
       {/* Header */}
       <div className="flex items-center gap-3 print:hidden">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/invoices')}>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(backPath)}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-xl font-bold text-foreground">{invoice.invoice_number}</h1>
         <StatusBadge status={invoice.status.toUpperCase()} />
         <div className="ml-auto flex gap-2">
+          {isQuotation && !isCancelled && (
+            <Button size="sm" className="gap-1.5 text-xs" onClick={handleConvertToInvoice} disabled={createInvoice.isPending}>
+              <FileOutput className="h-3.5 w-3.5" /> Convert to Invoice
+            </Button>
+          )}
           {canEdit && (
             <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => navigate(`/invoices/${id}/edit`)}>
               <Pencil className="h-3.5 w-3.5" /> Edit
             </Button>
           )}
-          {!isCancelled && invoice.balance_due > 0 && (
+          {!isCancelled && !isQuotation && invoice.balance_due > 0 && (
             <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => setPaymentOpen(true)}>
               <CreditCard className="h-3.5 w-3.5" /> Record Payment
             </Button>
@@ -108,7 +161,7 @@ export default function InvoiceDetailPage() {
           </div>
           <div className="text-right">
             <h3 className="text-sm font-semibold text-foreground">
-              {invoice.type === 'sale' ? 'SALES INVOICE' : 'PURCHASE BILL'}
+              {invoice.type === 'quotation' ? 'QUOTATION' : invoice.type === 'sale' ? 'SALES INVOICE' : 'PURCHASE BILL'}
               {invoice.is_vat_invoice && ' (VAT)'}
             </h3>
             <p className="text-sm font-mono font-bold text-foreground">{invoice.invoice_number}</p>
