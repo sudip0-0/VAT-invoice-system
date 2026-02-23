@@ -10,8 +10,10 @@ import { useInvoiceDetail, useInvoicePayments, useInvoices } from '@/hooks/useIn
 import { useBusiness } from '@/contexts/BusinessContext';
 import { useToast } from '@/hooks/use-toast';
 import { formatNPR } from '@/lib/nepal-format';
+import { amountInWords } from '@/lib/amount-in-words';
 import StatusBadge from '@/components/shared/StatusBadge';
 import PaymentDialog from '@/components/invoices/PaymentDialog';
+import PrintInvoice from '@/components/invoices/PrintInvoice';
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -24,8 +26,15 @@ export default function InvoiceDetailPage() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
+  const [showPrint, setShowPrint] = useState(false);
 
-  const handlePrint = () => window.print();
+  const handlePrint = () => {
+    setShowPrint(true);
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => setShowPrint(false), 500);
+    }, 100);
+  };
 
   const handlePayment = async (data: Record<string, any>) => {
     try {
@@ -218,6 +227,14 @@ export default function InvoiceDetailPage() {
             <p className="text-xs text-muted-foreground">{invoice.notes}</p>
           </div>
         )}
+
+        {/* Amount in Words */}
+        <div className="mt-4 pt-3 border-t border-border">
+          <p className="text-[10px] uppercase text-muted-foreground font-medium mb-1">Amount in Words</p>
+          <p className="text-xs text-foreground italic">
+            Nepali Rupees {amountInWords(invoice.total_amount)}
+          </p>
+        </div>
       </div>
 
       {/* Payments History */}
@@ -282,6 +299,13 @@ export default function InvoiceDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Hidden Print Template */}
+      {showPrint && (
+        <div className="hidden print:block fixed inset-0 z-[9999] bg-white">
+          <PrintInvoice ref={printRef} invoice={invoice} business={business!} />
+        </div>
+      )}
     </div>
   );
 }

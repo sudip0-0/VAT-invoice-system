@@ -115,12 +115,38 @@
 }
 
 @media print {
-  body { background: white !important; }
+  body { background: white !important; margin: 0 !important; padding: 0 !important; }
   .print\:hidden { display: none !important; }
+  .print\:block { display: block !important; }
   .print\:border-0 { border: 0 !important; }
   .print\:shadow-none { box-shadow: none !important; }
   .print\:p-0 { padding: 0 !important; }
   .print\:bg-transparent { background: transparent !important; }
   .print\:border { border: 1px solid #e5e7eb !important; }
   .print\:border-border { border-color: #e5e7eb !important; }
+
+  /* Hide everything except the print invoice */
+  .hidden.print\\:block {
+    display: block !important;
+    position: static !important;
+  }
+
+  /* Hide sidebar, nav, header, and the main screen content when printing */
+  aside, nav, header,
+  .space-y-4.animate-fade-in > *:not(.hidden) {
+    display: none !important;
+  }
+
+  /* Print invoice styling */
+  .print-invoice {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 10mm !important;
+    font-size: 11px !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
 }
