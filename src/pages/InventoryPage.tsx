@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Search, Pencil, Trash2, ArrowLeftRight } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, ArrowLeftRight, PackagePlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useItems, useItemCategories } from '@/hooks/useItems';
 import { formatNPR } from '@/lib/nepal-format';
@@ -8,10 +8,11 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import ItemDialog from '@/components/inventory/ItemDialog';
+import StockAdjustmentDialog from '@/components/inventory/StockAdjustmentDialog';
 import type { Item } from '@/hooks/useItems';
 
 export default function InventoryPage() {
-  const { items, isLoading, createItem, updateItem, deleteItem } = useItems();
+  const { items, isLoading, createItem, updateItem, deleteItem, adjustStock } = useItems();
   const { categories } = useItemCategories();
   const { toast } = useToast();
 
@@ -20,6 +21,7 @@ export default function InventoryPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [deletingItem, setDeletingItem] = useState<Item | null>(null);
+  const [adjustingItem, setAdjustingItem] = useState<Item | null>(null);
 
   const filtered = items.filter((item) => {
     if (tab === 'product' && item.type !== 'product') return false;
@@ -135,6 +137,11 @@ export default function InventoryPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
+                          {item.type === 'product' && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7" title="Adjust Stock" onClick={() => setAdjustingItem(item)}>
+                              <PackagePlus className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingItem(item); setDialogOpen(true); }}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
@@ -173,6 +180,21 @@ export default function InventoryPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <StockAdjustmentDialog
+        open={!!adjustingItem}
+        onOpenChange={(o) => !o && setAdjustingItem(null)}
+        item={adjustingItem}
+        onSubmit={async (data) => {
+          try {
+            await adjustStock.mutateAsync(data);
+            toast({ title: 'Stock adjusted successfully' });
+            setAdjustingItem(null);
+          } catch (e: any) {
+            toast({ title: 'Error', description: e.message, variant: 'destructive' });
+          }
+        }}
+        loading={adjustStock.isPending}
+      />
     </div>
   );
 }

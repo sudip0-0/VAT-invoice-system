@@ -59,7 +59,48 @@ export function useItems() {
     onSuccess: () => qc.invalidateQueries({ queryKey: key }),
   });
 
-  return { items: query.data || [], isLoading: query.isLoading, createItem, updateItem, deleteItem };
+  const adjustStock = useMutation({
+    mutationFn: async ({ item_id, quantity, direction, reason }: { item_id: string; quantity: number; direction: 'in' | 'out'; reason: string }) => {
+      // Get current stock
+      const { data: item, error: fetchErr } = await supabase
+        .from('items')
+        .select('current_stock')
+        .eq('id', item_id)
+        .single();
+      if (fetchErr) throw fetchErr;
+
+      const oldStock = Number(item.current_stock);
+      const newStock = direction === 'in' ? oldStock + quantity : oldStock - quantity;
+      if (newStock < 0) throw new Error('Stock cannot go below zero');
+
+      // Update item stock
+      const { error: updateErr } = await supabase
+        .from('items')
+        .update({ current_stock: newStock, updated_at: new Date().toISOString() })
+        .eq('id', item_id);
+      if (updateErr) throw updateErr;
+
+      // Insert stock movement record
+      const { error: moveErr } = await supabase
+        .from('stock_movements')
+        .insert({
+          business_id: business!.id,
+          item_id,
+          quantity,
+          direction,
+          reason: `manual: ${reason}`,
+          stock_before: oldStock,
+          stock_after: newStock,
+        });
+      if (moveErr) throw moveErr;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: ['stock_movements'] });
+    },
+  });
+
+  return { items: query.data || [], isLoading: query.isLoading, createItem, updateItem, deleteItem, adjustStock };
 }
 
 export function useItemCategories() {
