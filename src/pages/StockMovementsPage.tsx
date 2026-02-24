@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { Search, ArrowDownCircle, ArrowUpCircle, Package } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Search, ArrowDownCircle, ArrowUpCircle, Package, TrendingUp, TrendingDown, Activity } from 'lucide-react';
 import { useStockMovements } from '@/hooks/useStockMovements';
 import { useItems } from '@/hooks/useItems';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { Link } from 'react-router-dom';
 
 const reasonLabels: Record<string, string> = {
@@ -24,6 +25,15 @@ export default function StockMovementsPage() {
     selectedItem !== 'all' ? selectedItem : undefined
   );
 
+  const monthStats = useMemo(() => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const thisMonth = movements.filter(m => new Date(m.created_at) >= monthStart);
+    const totalIn = thisMonth.filter(m => m.direction === 'in').reduce((s, m) => s + m.quantity, 0);
+    const totalOut = thisMonth.filter(m => m.direction === 'out').reduce((s, m) => s + m.quantity, 0);
+    return { totalIn, totalOut, count: thisMonth.length };
+  }, [movements]);
+
   const filtered = movements.filter((m) => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -41,6 +51,41 @@ export default function StockMovementsPage() {
           <Package className="h-5 w-5 text-primary" />
           <h1 className="text-xl font-bold text-foreground">Stock Movements</h1>
         </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <Card className="border-border">
+          <CardContent className="flex items-center gap-3 p-4">
+            <div className="rounded-lg bg-emerald-500/10 p-2.5">
+              <TrendingUp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Stock In (This Month)</p>
+              <p className="text-lg font-bold text-foreground">{monthStats.totalIn}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border">
+          <CardContent className="flex items-center gap-3 p-4">
+            <div className="rounded-lg bg-destructive/10 p-2.5">
+              <TrendingDown className="h-4 w-4 text-destructive" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Stock Out (This Month)</p>
+              <p className="text-lg font-bold text-foreground">{monthStats.totalOut}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border">
+          <CardContent className="flex items-center gap-3 p-4">
+            <div className="rounded-lg bg-primary/10 p-2.5">
+              <Activity className="h-4 w-4 text-primary" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Movements (This Month)</p>
+              <p className="text-lg font-bold text-foreground">{monthStats.count}</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
