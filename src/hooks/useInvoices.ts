@@ -79,6 +79,8 @@ export function useInvoices() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: ['items', business?.id] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
     },
   });
 
@@ -137,6 +139,8 @@ export function useInvoices() {
     onSuccess: (id) => {
       qc.invalidateQueries({ queryKey: key });
       qc.invalidateQueries({ queryKey: ['invoice', id] });
+      qc.invalidateQueries({ queryKey: ['items', business?.id] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
     },
   });
 
