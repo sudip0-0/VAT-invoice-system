@@ -46,6 +46,14 @@ export function useInvoices() {
     }) => {
       const invoiceId = crypto.randomUUID();
       const desiredStatus = invoice.status || 'draft';
+      const paidAmount = Number(invoice.paid_amount || 0);
+
+      // Determine status based on payment
+      let finalStatus = desiredStatus;
+      if (desiredStatus === 'issued' && paidAmount > 0) {
+        const total = Number(invoice.total_amount || 0);
+        finalStatus = paidAmount >= total ? 'paid' : 'partially_paid';
+      }
 
       // Insert invoice as draft first so trigger doesn't fire before items exist
       const { error: invErr } = await supabase.from('invoices').insert({
@@ -68,12 +76,33 @@ export function useInvoices() {
       }
 
       // Now update status to desired value so the trigger fires with items present
-      if (desiredStatus !== 'draft') {
+      if (finalStatus !== 'draft') {
         const { error: statusErr } = await supabase
           .from('invoices')
-          .update({ status: desiredStatus as any, updated_at: new Date().toISOString() })
+          .update({ status: finalStatus as any, updated_at: new Date().toISOString() })
           .eq('id', invoiceId);
         if (statusErr) throw statusErr;
+      }
+
+      // Record payment if amount received
+      if (paidAmount > 0 && desiredStatus !== 'draft') {
+        const partyId = invoice.customer_id || invoice.vendor_id || null;
+        const now = new Date();
+        const { adToBS, formatBSShort } = await import('@/lib/bs-calendar');
+        const bsDate = adToBS(now);
+
+        const { error: payErr } = await supabase.from('payments').insert({
+          business_id: business!.id,
+          invoice_id: invoiceId,
+          party_id: partyId,
+          amount: paidAmount,
+          method: 'cash' as any,
+          status: 'completed' as any,
+          payment_date_ad: now.toISOString().slice(0, 10),
+          payment_date_bs: formatBSShort(bsDate),
+          notes: `Payment received on invoice ${invoice.invoice_number}`,
+        });
+        if (payErr) throw payErr;
       }
 
       const { data: biz } = await supabase
@@ -94,6 +123,7 @@ export function useInvoices() {
       qc.invalidateQueries({ queryKey: key });
       qc.invalidateQueries({ queryKey: ['items', business?.id] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
+      qc.invalidateQueries({ queryKey: ['all_payments'] });
     },
   });
 
