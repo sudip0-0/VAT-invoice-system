@@ -82,6 +82,7 @@ export default function InvoiceCreatePage() {
   const [isVat, setIsVat] = useState(business?.is_vat_registered ?? false);
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<LineItem[]>([newLine()]);
+  const [receivedAmount, setReceivedAmount] = useState<number>(0);
 
   const vatRate = useMemo(() => {
     const vat13 = taxRates.find((t) => t.type === 'vat_13');
@@ -165,7 +166,8 @@ export default function InvoiceCreatePage() {
           taxable_amount: totals.taxableAmount,
           vat_amount: totals.vatAmount,
           total_amount: totals.totalAmount,
-          balance_due: totals.totalAmount,
+          paid_amount: invoiceType === 'sale' ? receivedAmount : 0,
+          balance_due: invoiceType === 'sale' ? totals.totalAmount - receivedAmount : totals.totalAmount,
           notes: notes || null,
         },
         items: validLines.map((l) => ({
@@ -402,6 +404,25 @@ export default function InvoiceCreatePage() {
             <span>Total</span>
             <span>{formatNPR(totals.totalAmount)}</span>
           </div>
+          {invoiceType === 'sale' && (
+            <>
+              <div className="flex justify-between items-center text-muted-foreground">
+                <span>Received</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={receivedAmount}
+                  onChange={(e) => setReceivedAmount(Number(e.target.value))}
+                  className="h-7 text-xs text-right w-28"
+                />
+              </div>
+              <div className="flex justify-between text-sm font-medium text-foreground">
+                <span>Balance Due</span>
+                <span>{formatNPR(totals.totalAmount - receivedAmount)}</span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
