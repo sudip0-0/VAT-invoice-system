@@ -22,6 +22,7 @@ import PurchasesPage from "./pages/PurchasesPage";
 import PurchaseCreatePage from "./pages/PurchaseCreatePage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
+import PaymentsPage from "./pages/PaymentsPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
@@ -84,6 +85,9 @@ function AppRoutes() {
       } />
       <Route path="/reports" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><ReportsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
+      } />
+      <Route path="/payments" element={
+        <ProtectedRoute><RequireBusiness><DashboardLayout><PaymentsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/settings" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><SettingsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
