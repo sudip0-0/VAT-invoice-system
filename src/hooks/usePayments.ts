@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useBusiness } from '@/contexts/BusinessContext';
+import type { TablesInsert } from '@/integrations/supabase/types';
 
 export interface PaymentWithDetails {
   id: string;
@@ -25,8 +26,9 @@ export interface PaymentWithDetails {
 
 export function useAllPayments() {
   const { business } = useBusiness();
+  const qc = useQueryClient();
 
-  return useQuery({
+  const query = useQuery({
     queryKey: ['all_payments', business?.id],
     enabled: !!business?.id,
     queryFn: async () => {
@@ -40,4 +42,22 @@ export function useAllPayments() {
       return data as unknown as PaymentWithDetails[];
     },
   });
+
+  const recordStandalonePayment = useMutation({
+    mutationFn: async (payment: Omit<TablesInsert<'payments'>, 'business_id'>) => {
+      const { data, error } = await supabase
+        .from('payments')
+        .insert({ ...payment, business_id: business!.id })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['all_payments', business?.id] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+
+  return { ...query, recordStandalonePayment };
 }
