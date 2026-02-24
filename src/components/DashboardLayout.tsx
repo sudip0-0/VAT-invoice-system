@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, ShoppingCart, Package, Users,
   BarChart3, Settings, ChevronLeft, ChevronRight, Receipt,
-  Building2, Bell, Search, Menu, LogOut
+  Building2, Bell, Search, Menu, LogOut, ArrowLeftRight
 } from 'lucide-react';
 import { todayBS, formatBS } from '@/lib/bs-calendar';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,6 +15,7 @@ const navItems = [
   { label: 'Purchases', icon: ShoppingCart, path: '/purchases' },
   { label: 'Quotations', icon: Receipt, path: '/quotations' },
   { label: 'Inventory', icon: Package, path: '/inventory' },
+  { label: 'Stock Movements', icon: ArrowLeftRight, path: '/inventory/movements' },
   { label: 'Parties', icon: Users, path: '/parties' },
   { label: 'Reports', icon: BarChart3, path: '/reports' },
   { label: 'Settings', icon: Settings, path: '/settings' },
