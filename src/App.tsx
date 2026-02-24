@@ -16,6 +16,7 @@ import InvoiceEditPage from "./pages/InvoiceEditPage";
 import InventoryPage from "./pages/InventoryPage";
 import StockMovementsPage from "./pages/StockMovementsPage";
 import PartiesPage from "./pages/PartiesPage";
+import PartyDetailPage from "./pages/PartyDetailPage";
 import QuotationsPage from "./pages/QuotationsPage";
 import QuotationCreatePage from "./pages/QuotationCreatePage";
 import PurchasesPage from "./pages/PurchasesPage";
@@ -82,6 +83,9 @@ function AppRoutes() {
       } />
       <Route path="/parties" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><PartiesPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
+      } />
+      <Route path="/parties/:id" element={
+        <ProtectedRoute><RequireBusiness><DashboardLayout><PartyDetailPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/reports" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><ReportsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
