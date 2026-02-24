@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Plus, Search, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, ArrowLeftRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useItems, useItemCategories } from '@/hooks/useItems';
 import { formatNPR } from '@/lib/nepal-format';
 import { Button } from '@/components/ui/button';
@@ -62,9 +63,16 @@ export default function InventoryPage() {
     <div className="space-y-4 animate-fade-in">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-foreground">Inventory</h1>
-        <Button size="sm" className="gap-1.5 text-xs" onClick={() => { setEditingItem(null); setDialogOpen(true); }}>
-          <Plus className="h-3.5 w-3.5" /> Add Item
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link to="/inventory/movements">
+            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+              <ArrowLeftRight className="h-3.5 w-3.5" /> Stock Movements
+            </Button>
+          </Link>
+          <Button size="sm" className="gap-1.5 text-xs" onClick={() => { setEditingItem(null); setDialogOpen(true); }}>
+            <Plus className="h-3.5 w-3.5" /> Add Item
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">

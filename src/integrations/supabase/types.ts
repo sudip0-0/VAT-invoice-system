@@ -613,6 +613,67 @@ export type Database = {
         }
         Relationships: []
       }
+      stock_movements: {
+        Row: {
+          business_id: string
+          created_at: string
+          direction: string
+          id: string
+          invoice_id: string | null
+          item_id: string
+          quantity: number
+          reason: string
+          stock_after: number
+          stock_before: number
+        }
+        Insert: {
+          business_id: string
+          created_at?: string
+          direction: string
+          id?: string
+          invoice_id?: string | null
+          item_id: string
+          quantity: number
+          reason?: string
+          stock_after?: number
+          stock_before?: number
+        }
+        Update: {
+          business_id?: string
+          created_at?: string
+          direction?: string
+          id?: string
+          invoice_id?: string | null
+          item_id?: string
+          quantity?: number
+          reason?: string
+          stock_after?: number
+          stock_before?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_movements_business_id_fkey"
+            columns: ["business_id"]
+            isOneToOne: false
+            referencedRelation: "businesses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_movements_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_movements_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tax_rates: {
         Row: {
           business_id: string
