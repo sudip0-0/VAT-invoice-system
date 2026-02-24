@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Pencil, Trash2 } from 'lucide-react';
 import { useParties, type PartyWithBalance } from '@/hooks/useParties';
 import { formatNPR } from '@/lib/nepal-format';
@@ -16,6 +17,7 @@ export default function PartiesPage() {
   const [deleteParty, setDeleteParty] = useState<PartyWithBalance | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const navigate = useNavigate();
   const { data: parties = [], isLoading, createParty, updateParty, deleteParty: deletePartyMutation } = useParties();
   const { toast } = useToast();
 
@@ -116,7 +118,11 @@ export default function PartiesPage() {
                 </td></tr>
               ) : filtered.map((p) => (
                 <tr key={p.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-3 font-medium text-foreground">{p.name}</td>
+                  <td className="px-4 py-3 font-medium text-foreground">
+                    <button onClick={() => navigate(`/parties/${p.id}`)} className="hover:underline text-left">
+                      {p.name}
+                    </button>
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`text-[11px] font-medium ${p.type === 'customer' ? 'text-success' : p.type === 'vendor' ? 'text-primary' : 'text-accent'}`}>
                       {p.type === 'customer' ? 'Customer' : p.type === 'vendor' ? 'Vendor' : 'Both'}
