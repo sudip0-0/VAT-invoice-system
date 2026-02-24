@@ -7,6 +7,10 @@ export type Party = Tables<'parties'>;
 export type PartyInsert = TablesInsert<'parties'>;
 export type PartyUpdate = TablesUpdate<'parties'>;
 
+export interface PartyWithBalance extends Party {
+  ledger_balance: number; // positive = receivable, negative = payable
+}
+
 export function useParties() {
   const { business } = useBusiness();
   const queryClient = useQueryClient();
@@ -15,14 +19,58 @@ export function useParties() {
     queryKey: ['parties', business?.id],
     queryFn: async () => {
       if (!business) return [];
-      const { data, error } = await supabase
-        .from('parties')
-        .select('*')
-        .eq('business_id', business.id)
-        .is('deleted_at', null)
-        .order('name');
-      if (error) throw error;
-      return data as Party[];
+
+      // Fetch parties, invoices, and standalone payments in parallel
+      const [partiesRes, invoicesRes, paymentsRes] = await Promise.all([
+        supabase
+          .from('parties')
+          .select('*')
+          .eq('business_id', business.id)
+          .is('deleted_at', null)
+          .order('name'),
+        supabase
+          .from('invoices')
+          .select('customer_id, vendor_id, balance_due, type, status')
+          .eq('business_id', business.id)
+          .is('deleted_at', null)
+          .neq('status', 'cancelled'),
+        supabase
+          .from('payments')
+          .select('party_id, amount, invoice_id')
+          .eq('business_id', business.id)
+          .is('invoice_id', null), // only standalone payments not tied to invoices
+      ]);
+
+      if (partiesRes.error) throw partiesRes.error;
+
+      const parties = partiesRes.data as Party[];
+      const invoices = invoicesRes.data || [];
+      const standalonePayments = paymentsRes.data || [];
+
+      // Compute ledger balance per party
+      const balanceMap: Record<string, number> = {};
+
+      for (const inv of invoices) {
+        if (inv.type === 'sale' && inv.customer_id) {
+          // Customer owes us balance_due (receivable)
+          balanceMap[inv.customer_id] = (balanceMap[inv.customer_id] || 0) + Number(inv.balance_due);
+        } else if (inv.type === 'purchase' && inv.vendor_id) {
+          // We owe vendor balance_due (payable = negative)
+          balanceMap[inv.vendor_id] = (balanceMap[inv.vendor_id] || 0) - Number(inv.balance_due);
+        }
+      }
+
+      // Standalone payments reduce outstanding
+      for (const pay of standalonePayments) {
+        if (pay.party_id) {
+          balanceMap[pay.party_id] = (balanceMap[pay.party_id] || 0) - Number(pay.amount);
+        }
+      }
+
+      return parties.map((p) => ({
+        ...p,
+        ledger_balance: (p.opening_balance || 0) + (balanceMap[p.id] || 0),
+      })) as PartyWithBalance[];
     },
     enabled: !!business,
   });

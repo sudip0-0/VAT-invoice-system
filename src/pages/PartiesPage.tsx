@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus, Search, Pencil, Trash2 } from 'lucide-react';
-import { useParties, type Party } from '@/hooks/useParties';
+import { useParties, type PartyWithBalance } from '@/hooks/useParties';
 import { formatNPR } from '@/lib/nepal-format';
 import PartyDialog, { type PartyFormData } from '@/components/parties/PartyDialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -12,8 +12,8 @@ export default function PartiesPage() {
   const [tab, setTab] = useState<TabType>('all');
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editParty, setEditParty] = useState<Party | null>(null);
-  const [deleteParty, setDeleteParty] = useState<Party | null>(null);
+  const [editParty, setEditParty] = useState<PartyWithBalance | null>(null);
+  const [deleteParty, setDeleteParty] = useState<PartyWithBalance | null>(null);
   const [saving, setSaving] = useState(false);
 
   const { data: parties = [], isLoading, createParty, updateParty, deleteParty: deletePartyMutation } = useParties();
@@ -59,7 +59,7 @@ export default function PartiesPage() {
   };
 
   const openCreate = () => { setEditParty(null); setDialogOpen(true); };
-  const openEdit = (p: Party) => { setEditParty(p); setDialogOpen(true); };
+  const openEdit = (p: PartyWithBalance) => { setEditParty(p); setDialogOpen(true); };
 
   const tabs: { label: string; value: TabType }[] = [
     { label: 'All', value: 'all' },
@@ -125,10 +125,10 @@ export default function PartiesPage() {
                   <td className="px-4 py-3 text-muted-foreground">{p.phone || '—'}</td>
                   <td className="px-4 py-3 text-muted-foreground font-mono">{p.pan_number || '—'}</td>
                   <td className="px-4 py-3 text-right">
-                    {p.opening_balance !== 0 ? (
-                      <span className={`font-medium ${p.opening_balance > 0 ? 'text-success' : 'text-destructive'}`}>
-                        {formatNPR(Math.abs(p.opening_balance), { showSymbol: false })}
-                        <span className="ml-1 text-[10px] text-muted-foreground">{p.opening_balance > 0 ? 'Recv' : 'Pay'}</span>
+                    {p.ledger_balance !== 0 ? (
+                      <span className={`font-medium ${p.ledger_balance > 0 ? 'text-success' : 'text-destructive'}`}>
+                        {formatNPR(Math.abs(p.ledger_balance), { showSymbol: false })}
+                        <span className="ml-1 text-[10px] text-muted-foreground">{p.ledger_balance > 0 ? 'Recv' : 'Pay'}</span>
                       </span>
                     ) : (
                       <span className="text-muted-foreground">—</span>
