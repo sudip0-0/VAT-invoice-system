@@ -30,10 +30,20 @@ export default function InvoiceDetailPage() {
 
   const handlePrint = () => {
     setShowPrint(true);
-    setTimeout(() => {
-      window.print();
-      setTimeout(() => setShowPrint(false), 500);
-    }, 100);
+    // Wait for the print template to render, then trigger print
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        window.print();
+        // Keep template visible briefly after print dialog closes
+        const onAfterPrint = () => {
+          setShowPrint(false);
+          window.removeEventListener('afterprint', onAfterPrint);
+        };
+        window.addEventListener('afterprint', onAfterPrint);
+        // Fallback: hide after 60s if afterprint never fires
+        setTimeout(() => setShowPrint(false), 60000);
+      }, 200);
+    });
   };
 
   const handlePayment = async (data: Record<string, any>) => {
@@ -144,7 +154,7 @@ export default function InvoiceDetailPage() {
             </Button>
           )}
           <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={handlePrint}>
-            <Printer className="h-3.5 w-3.5" /> Print
+            <Printer className="h-3.5 w-3.5" /> Print / PDF
           </Button>
         </div>
       </div>
@@ -353,12 +363,10 @@ export default function InvoiceDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Hidden Print Template */}
-      {showPrint && (
-        <div className="hidden print:block fixed inset-0 z-[9999] bg-white">
-          <PrintInvoice ref={printRef} invoice={invoice} business={business!} />
-        </div>
-      )}
+      {/* Hidden Print Template — rendered off-screen, shown only during print */}
+      <div className={showPrint ? 'print-template-active' : 'print-template-hidden'}>
+        <PrintInvoice ref={printRef} invoice={invoice} business={business!} />
+      </div>
     </div>
   );
 }
