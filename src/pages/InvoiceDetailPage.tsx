@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Printer, CreditCard, Pencil, Ban, FileOutput } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -363,10 +364,13 @@ export default function InvoiceDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Hidden Print Template — rendered off-screen, shown only during print */}
-      <div className={showPrint ? 'print-template-active' : 'print-template-hidden'}>
-        <PrintInvoice ref={printRef} invoice={invoice} business={business!} />
-      </div>
+      {/* Print Template — portaled to body so print CSS can target it */}
+      {createPortal(
+        <div className={showPrint ? 'print-template-active' : 'print-template-hidden'}>
+          <PrintInvoice ref={printRef} invoice={invoice} business={business!} />
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

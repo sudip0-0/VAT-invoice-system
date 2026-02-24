@@ -141,34 +141,18 @@
     print-color-adjust: exact !important;
   }
 
-  /* Hide everything on the page */
-  body > * {
+  /* Hide the app root */
+  #root {
     display: none !important;
   }
 
-  /* Show only the print template */
+  /* Show the portaled print template */
   .print-template-active {
     display: block !important;
     position: static !important;
     visibility: visible !important;
     left: auto !important;
     width: 100% !important;
-  }
-
-  /* Ensure the root div is visible so the template can render */
-  #root {
-    display: block !important;
-  }
-
-  /* But hide all direct children of root except the template's ancestor */
-  #root > * {
-    display: none !important;
-  }
-
-  /* Walk up the tree: show ancestors of the print template */
-  .print-template-active,
-  .print-template-active * {
-    visibility: visible !important;
   }
 
   /* Print invoice styling */
