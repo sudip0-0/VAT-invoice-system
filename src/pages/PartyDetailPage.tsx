@@ -1,13 +1,15 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Pencil, Phone, Mail, MapPin, Download, FileText, CreditCard } from 'lucide-react';
+import { ArrowLeft, Pencil, Phone, Mail, MapPin, Download, FileText, CreditCard, Plus } from 'lucide-react';
 import { useParties, type PartyWithBalance } from '@/hooks/useParties';
 import { usePartyLedger } from '@/hooks/useReports';
+import { useAllPayments } from '@/hooks/usePayments';
 import { formatNPR } from '@/lib/nepal-format';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import PartyDialog, { type PartyFormData } from '@/components/parties/PartyDialog';
+import StandalonePaymentDialog from '@/components/payments/StandalonePaymentDialog';
 import { useToast } from '@/hooks/use-toast';
 
 function getDefaultDateRange() {
@@ -39,7 +41,10 @@ export default function PartyDetailPage() {
   const [dateFrom, setDateFrom] = useState(defaults.from);
   const [dateTo, setDateTo] = useState(defaults.to);
   const [editOpen, setEditOpen] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentDirection, setPaymentDirection] = useState<'in' | 'out'>('in');
   const [saving, setSaving] = useState(false);
+  const { recordStandalonePayment } = useAllPayments();
 
   const { data: ledgerData, isLoading: ledgerLoading } = usePartyLedger(id, dateFrom, dateTo);
 
@@ -97,9 +102,21 @@ export default function PartyDetailPage() {
             </span>
           </div>
         </div>
-        <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setEditOpen(true)}>
-          <Pencil className="h-3 w-3" /> Edit
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={() => {
+              setPaymentDirection(party.type === 'vendor' ? 'out' : 'in');
+              setPaymentOpen(true);
+            }}
+          >
+            <Plus className="h-3 w-3" /> Record Payment
+          </Button>
+          <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setEditOpen(true)}>
+            <Pencil className="h-3 w-3" /> Edit
+          </Button>
+        </div>
       </div>
 
       {/* Info Cards */}
@@ -244,6 +261,26 @@ export default function PartyDetailPage() {
       </div>
 
       <PartyDialog open={editOpen} onOpenChange={setEditOpen} party={party} onSave={handleSave} loading={saving} />
+      <StandalonePaymentDialog
+        open={paymentOpen}
+        onOpenChange={setPaymentOpen}
+        direction={paymentDirection}
+        loading={recordStandalonePayment.isPending}
+        onSubmit={(data) => {
+          recordStandalonePayment.mutate(
+            { ...data, party_id: party.id } as any,
+            {
+              onSuccess: () => {
+                toast({ title: 'Payment recorded' });
+                setPaymentOpen(false);
+              },
+              onError: (err: any) => {
+                toast({ title: 'Error', description: err.message, variant: 'destructive' });
+              },
+            }
+          );
+        }}
+      />
     </div>
   );
 }
