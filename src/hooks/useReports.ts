@@ -204,16 +204,14 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
       let balance = openingBalance;
       const ledger: PartyLedgerEntry[] = [];
 
-      if (openingBalance !== 0) {
-        ledger.push({
-          date_bs: '—',
-          time: '—',
-          description: 'Opening Balance',
-          debit: openingBalance > 0 ? openingBalance : 0,
-          credit: openingBalance < 0 ? Math.abs(openingBalance) : 0,
-          balance: openingBalance,
-        });
-      }
+      ledger.push({
+        date_bs: '—',
+        time: '—',
+        description: 'Opening Balance',
+        debit: openingBalance > 0 ? openingBalance : 0,
+        credit: openingBalance < 0 ? Math.abs(openingBalance) : 0,
+        balance: openingBalance,
+      });
 
       for (const e of entries) {
         balance += e.debit - e.credit;
