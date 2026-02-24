@@ -139,7 +139,7 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
       // Get invoices for this party
       const { data: invoices, error: invErr } = await supabase
         .from('invoices')
-        .select('id, invoice_number, type, issued_date_bs, issued_date_ad, total_amount')
+        .select('id, invoice_number, type, issued_date_bs, issued_date_ad, total_amount, created_at')
         .eq('business_id', business!.id)
         .is('deleted_at', null)
         .neq('status', 'cancelled')
@@ -152,7 +152,7 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
       // Get payments for this party
       const { data: payments, error: payErr } = await supabase
         .from('payments')
-        .select('id, payment_date_bs, payment_date_ad, amount, method, reference')
+        .select('id, payment_date_bs, payment_date_ad, amount, method, reference, created_at')
         .eq('business_id', business!.id)
         .eq('party_id', partyId!)
         .eq('status', 'completed')
@@ -162,12 +162,13 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
       if (payErr) throw payErr;
 
       // Combine into ledger entries sorted by date
-      const entries: { date_ad: string; date_bs: string; description: string; debit: number; credit: number }[] = [];
+      const entries: { date_ad: string; created_at: string; date_bs: string; description: string; debit: number; credit: number }[] = [];
 
       for (const inv of invoices || []) {
         const isSale = inv.type === 'sale';
         entries.push({
           date_ad: inv.issued_date_ad,
+          created_at: inv.created_at,
           date_bs: inv.issued_date_bs,
           description: `${isSale ? 'Invoice' : 'Bill'} ${inv.invoice_number}`,
           debit: isSale ? Number(inv.total_amount) : 0,
@@ -178,6 +179,7 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
       for (const p of payments || []) {
         entries.push({
           date_ad: p.payment_date_ad,
+          created_at: p.created_at,
           date_bs: p.payment_date_bs,
           description: `Payment (${p.method.replace('_', ' ')})${p.reference ? ` - ${p.reference}` : ''}`,
           debit: 0,
@@ -185,7 +187,7 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
         });
       }
 
-      entries.sort((a, b) => a.date_ad.localeCompare(b.date_ad));
+      entries.sort((a, b) => a.date_ad.localeCompare(b.date_ad) || a.created_at.localeCompare(b.created_at));
 
       let balance = 0;
       const ledger: PartyLedgerEntry[] = entries.map((e) => {
