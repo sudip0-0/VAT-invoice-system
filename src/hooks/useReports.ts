@@ -137,6 +137,16 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
     queryKey: ['report-ledger', business?.id, partyId, dateFrom, dateTo],
     enabled: !!business?.id && !!partyId && !!dateFrom && !!dateTo,
     queryFn: async () => {
+      // Get party's opening balance
+      const { data: party, error: partyErr } = await supabase
+        .from('parties')
+        .select('opening_balance')
+        .eq('id', partyId!)
+        .single();
+      if (partyErr) throw partyErr;
+
+      const openingBalance = Number(party?.opening_balance || 0);
+
       // Get invoices for this party
       const { data: invoices, error: invErr } = await supabase
         .from('invoices')
@@ -190,12 +200,26 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
 
       entries.sort((a, b) => a.date_ad.localeCompare(b.date_ad) || a.created_at.localeCompare(b.created_at));
 
-      let balance = 0;
-      const ledger: PartyLedgerEntry[] = entries.map((e) => {
+      // Start with opening balance row
+      let balance = openingBalance;
+      const ledger: PartyLedgerEntry[] = [];
+
+      if (openingBalance !== 0) {
+        ledger.push({
+          date_bs: '—',
+          time: '—',
+          description: 'Opening Balance',
+          debit: openingBalance > 0 ? openingBalance : 0,
+          credit: openingBalance < 0 ? Math.abs(openingBalance) : 0,
+          balance: openingBalance,
+        });
+      }
+
+      for (const e of entries) {
         balance += e.debit - e.credit;
         const time = new Date(e.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-        return { date_bs: e.date_bs, time, description: e.description, debit: e.debit, credit: e.credit, balance };
-      });
+        ledger.push({ date_bs: e.date_bs, time, description: e.description, debit: e.debit, credit: e.credit, balance });
+      }
 
       return { entries: ledger, closingBalance: balance };
     },
