@@ -263,8 +263,8 @@ function PartyLedgerReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: str
   const handleExport = () => {
     if (!data?.entries.length) return;
     const partyName = parties.find((p) => p.id === selectedParty)?.name || 'party';
-    const headers = ['Date (BS)', 'Description', 'Debit', 'Credit', 'Balance'];
-    const rows = data.entries.map((e) => [e.date_bs, e.description, String(e.debit), String(e.credit), String(e.balance)]);
+    const headers = ['Date (BS)', 'Time', 'Description', 'Debit', 'Credit', 'Balance'];
+    const rows = data.entries.map((e) => [e.date_bs, e.time, e.description, String(e.debit), String(e.credit), String(e.balance)]);
     exportCSV(headers, rows, `ledger-${partyName}-${dateFrom}-${dateTo}.csv`);
   };
 
@@ -306,29 +306,31 @@ function PartyLedgerReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: str
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border bg-muted/50">
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Date (BS)</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Description</th>
-                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">Debit</th>
-                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">Credit</th>
-                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">Balance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.entries.map((e, i) => (
-                    <tr key={i} className="border-b border-border last:border-0">
-                      <td className="px-3 py-2 text-muted-foreground">{e.date_bs}</td>
-                      <td className="px-3 py-2 text-foreground">{e.description}</td>
-                      <td className="px-3 py-2 text-right text-foreground">{e.debit > 0 ? formatNPR(e.debit, { showSymbol: false }) : '—'}</td>
-                      <td className="px-3 py-2 text-right text-foreground">{e.credit > 0 ? formatNPR(e.credit, { showSymbol: false }) : '—'}</td>
-                      <td className={`px-3 py-2 text-right font-medium ${e.balance >= 0 ? 'text-foreground' : 'text-success'}`}>
-                        {formatNPR(Math.abs(e.balance), { showSymbol: false })} {e.balance < 0 ? 'Cr' : 'Dr'}
-                      </td>
+                     <th className="px-3 py-2 text-left font-medium text-muted-foreground">Date (BS)</th>
+                     <th className="px-3 py-2 text-left font-medium text-muted-foreground">Time</th>
+                     <th className="px-3 py-2 text-left font-medium text-muted-foreground">Description</th>
+                     <th className="px-3 py-2 text-right font-medium text-muted-foreground">Debit</th>
+                     <th className="px-3 py-2 text-right font-medium text-muted-foreground">Credit</th>
+                     <th className="px-3 py-2 text-right font-medium text-muted-foreground">Balance</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   {data.entries.map((e, i) => (
+                     <tr key={i} className="border-b border-border last:border-0">
+                       <td className="px-3 py-2 text-muted-foreground">{e.date_bs}</td>
+                       <td className="px-3 py-2 text-muted-foreground text-[11px]">{e.time}</td>
+                       <td className="px-3 py-2 text-foreground">{e.description}</td>
+                       <td className="px-3 py-2 text-right text-foreground">{e.debit > 0 ? formatNPR(e.debit, { showSymbol: false }) : '—'}</td>
+                       <td className="px-3 py-2 text-right text-foreground">{e.credit > 0 ? formatNPR(e.credit, { showSymbol: false }) : '—'}</td>
+                       <td className={`px-3 py-2 text-right font-medium ${e.balance >= 0 ? 'text-foreground' : 'text-success'}`}>
+                         {formatNPR(Math.abs(e.balance), { showSymbol: false })} {e.balance < 0 ? 'Cr' : 'Dr'}
+                       </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-foreground/20 bg-muted/30">
-                    <td colSpan={4} className="px-3 py-2 font-semibold text-foreground">Closing Balance</td>
+                   <td colSpan={5} className="px-3 py-2 font-semibold text-foreground">Closing Balance</td>
                     <td className={`px-3 py-2 text-right font-bold ${data.closingBalance >= 0 ? 'text-foreground' : 'text-success'}`}>
                       {formatNPR(Math.abs(data.closingBalance), { showSymbol: false })} {data.closingBalance < 0 ? 'Cr' : 'Dr'}
                     </td>

@@ -30,6 +30,7 @@ interface VATSummaryRow {
 
 interface PartyLedgerEntry {
   date_bs: string;
+  time: string;
   description: string;
   debit: number;
   credit: number;
@@ -192,7 +193,8 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
       let balance = 0;
       const ledger: PartyLedgerEntry[] = entries.map((e) => {
         balance += e.debit - e.credit;
-        return { date_bs: e.date_bs, description: e.description, debit: e.debit, credit: e.credit, balance };
+        const time = new Date(e.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        return { date_bs: e.date_bs, time, description: e.description, debit: e.debit, credit: e.credit, balance };
       });
 
       return { entries: ledger, closingBalance: balance };
