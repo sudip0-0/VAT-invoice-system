@@ -45,10 +45,14 @@ export function useInvoices() {
       items: Omit<TablesInsert<'invoice_items'>, 'invoice_id'>[];
     }) => {
       const invoiceId = crypto.randomUUID();
+      const desiredStatus = invoice.status || 'draft';
+
+      // Insert invoice as draft first so trigger doesn't fire before items exist
       const { error: invErr } = await supabase.from('invoices').insert({
         ...invoice,
         id: invoiceId,
         business_id: business!.id,
+        status: 'draft' as any,
       });
       if (invErr) throw invErr;
 
@@ -61,6 +65,15 @@ export function useInvoices() {
           }))
         );
         if (itemsErr) throw itemsErr;
+      }
+
+      // Now update status to desired value so the trigger fires with items present
+      if (desiredStatus !== 'draft') {
+        const { error: statusErr } = await supabase
+          .from('invoices')
+          .update({ status: desiredStatus as any, updated_at: new Date().toISOString() })
+          .eq('id', invoiceId);
+        if (statusErr) throw statusErr;
       }
 
       const { data: biz } = await supabase
