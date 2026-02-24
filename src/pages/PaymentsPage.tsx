@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Search, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Search, Wallet, Plus } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { useAllPayments, type PaymentWithDetails } from '@/hooks/usePayments';
 import { formatNPR } from '@/lib/nepal-format';
+import StandalonePaymentDialog from '@/components/payments/StandalonePaymentDialog';
+import { toast } from 'sonner';
 
 const METHOD_LABELS: Record<string, string> = {
   cash: 'Cash',
@@ -102,9 +105,12 @@ function PaymentTable({ payments, type }: { payments: PaymentWithDetails[]; type
 
 export default function PaymentsPage() {
   const [search, setSearch] = useState('');
-  const { data: payments = [], isLoading } = useAllPayments();
+  const [activeTab, setActiveTab] = useState<'in' | 'out'>('in');
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const { data: payments = [], isLoading, recordStandalonePayment } = useAllPayments();
 
   const { paymentsIn, paymentsOut, statsIn, statsOut } = useMemo(() => {
+    // ... keep existing code
     const inTypes = new Set(['sale', 'sale_return']);
     const outTypes = new Set(['purchase', 'purchase_return']);
 
@@ -118,12 +124,10 @@ export default function PaymentsPage() {
       } else if (invType && outTypes.has(invType)) {
         pOut.push(p);
       } else {
-        // No invoice or unknown type — treat as in
         pIn.push(p);
       }
     }
 
-    // Filter by search
     const q = search.toLowerCase();
     const filterFn = (p: PaymentWithDetails) => {
       if (!q) return true;
@@ -153,6 +157,18 @@ export default function PaymentsPage() {
     };
   }, [payments, search]);
 
+  const handleRecordPayment = (data: Record<string, any>) => {
+    recordStandalonePayment.mutate(data as any, {
+      onSuccess: () => {
+        toast.success('Payment recorded successfully');
+        setDialogOpen(false);
+      },
+      onError: (err: any) => {
+        toast.error(err.message || 'Failed to record payment');
+      },
+    });
+  };
+
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -160,19 +176,32 @@ export default function PaymentsPage() {
           <Wallet className="h-5 w-5 text-primary" />
           <h1 className="text-xl font-bold text-foreground">Payments</h1>
         </div>
-        <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground max-w-xs">
-          <Search className="h-3.5 w-3.5" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search payments..."
-            className="w-full bg-transparent outline-none text-foreground placeholder:text-muted-foreground"
-          />
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground max-w-xs">
+            <Search className="h-3.5 w-3.5" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search payments..."
+              className="w-full bg-transparent outline-none text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+          <Button size="sm" className="gap-1.5 text-xs" onClick={() => setDialogOpen(true)}>
+            <Plus className="h-3.5 w-3.5" /> Record Payment
+          </Button>
         </div>
       </div>
 
-      <Tabs defaultValue="in" className="space-y-4">
+      <StandalonePaymentDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        direction={activeTab}
+        onSubmit={handleRecordPayment}
+        loading={recordStandalonePayment.isPending}
+      />
+
+      <Tabs defaultValue="in" className="space-y-4" onValueChange={(v) => setActiveTab(v as 'in' | 'out')}>
         <TabsList className="grid w-full max-w-xs grid-cols-2">
           <TabsTrigger value="in" className="gap-1.5 text-xs">
             <ArrowDownLeft className="h-3.5 w-3.5" /> Payment In
