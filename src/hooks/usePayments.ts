@@ -21,7 +21,7 @@ export interface PaymentWithDetails {
   gateway_ref_id: string | null;
   created_at: string;
   invoice: { invoice_number: string; type: string } | null;
-  party: { name: string } | null;
+  party: { name: string; type: string } | null;
 }
 
 export function useAllPayments() {
@@ -34,7 +34,7 @@ export function useAllPayments() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('payments')
-        .select('*, invoice:invoices!payments_invoice_id_fkey(invoice_number, type), party:parties!payments_party_id_fkey(name)')
+        .select('*, invoice:invoices!payments_invoice_id_fkey(invoice_number, type), party:parties!payments_party_id_fkey(name, type)')
         .eq('business_id', business!.id)
         .order('payment_date_ad', { ascending: false })
         .limit(500);
