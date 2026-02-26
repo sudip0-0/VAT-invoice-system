@@ -12,6 +12,9 @@ import {
   useItemWiseSalesPurchase, useLowStockAlert, useDayBook, useCNDNRegister,
   useOutstandingReport, useVATReturnSummary, useDailySummary,
 } from '@/hooks/useReportsExtra';
+import {
+  useTrialBalance, useBalanceSheetSummary, useTopSellingItems, useVATAnnex,
+} from '@/hooks/useReportsExtra2';
 import { formatNPR } from '@/lib/nepal-format';
 import { nepalNow, formatLocalDate } from '@/lib/nepal-date';
 import {
@@ -176,6 +179,10 @@ export default function ReportsPage() {
           <TabsTrigger value="stock" className="text-xs px-3">Stock Summary</TabsTrigger>
           <TabsTrigger value="low-stock" className="text-xs px-3">Low Stock Alert</TabsTrigger>
           <TabsTrigger value="all-parties" className="text-xs px-3">All Parties</TabsTrigger>
+          <TabsTrigger value="trial-balance" className="text-xs px-3">Trial Balance</TabsTrigger>
+          <TabsTrigger value="balance-sheet" className="text-xs px-3">Balance Sheet</TabsTrigger>
+          <TabsTrigger value="top-selling" className="text-xs px-3">Top Selling Items</TabsTrigger>
+          <TabsTrigger value="vat-annex" className="text-xs px-3">VAT Annex</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sales" className="mt-4"><SalesReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
@@ -194,6 +201,10 @@ export default function ReportsPage() {
         <TabsContent value="stock" className="mt-4"><StockSummaryReport /></TabsContent>
         <TabsContent value="low-stock" className="mt-4"><LowStockAlertReport /></TabsContent>
         <TabsContent value="all-parties" className="mt-4"><AllPartiesReport /></TabsContent>
+        <TabsContent value="trial-balance" className="mt-4"><TrialBalanceReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
+        <TabsContent value="balance-sheet" className="mt-4"><BalanceSheetReport dateTo={dateTo} /></TabsContent>
+        <TabsContent value="top-selling" className="mt-4"><TopSellingReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
+        <TabsContent value="vat-annex" className="mt-4"><VATAnnexReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
       </Tabs>
     </div>
   );
@@ -956,6 +967,203 @@ function DailySummaryReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: st
           <td className="px-3 py-2 text-right font-semibold text-destructive">{formatNPR(data.totals.total_payments_out, { showSymbol: false })}</td>
           <td className="px-3 py-2 text-right font-semibold text-muted-foreground">{data.totals.invoice_count}</td>
           <td className="px-3 py-2 text-right font-semibold text-muted-foreground">{data.totals.payment_count}</td>
+        </tr></tfoot>}
+      </ReportTable>
+    </div>
+  );
+}
+
+// ───────── Trial Balance ─────────
+function TrialBalanceReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
+  const { data, isLoading } = useTrialBalance(dateFrom, dateTo);
+  const handleExport = () => { if (!data?.rows.length) return; exportCSV(['Account', 'Type', 'Debit', 'Credit'], data.rows.map(r => [r.account_name, r.type, String(r.debit), String(r.credit)]), `trial-balance-${dateFrom}-${dateTo}.csv`); };
+
+  return (
+    <div className="space-y-3 max-w-2xl">
+      <div className="flex justify-end"><ExportButton onClick={handleExport} disabled={!data?.rows.length} /></div>
+      <ReportTable loading={isLoading} empty={!data?.rows.length}>
+        <thead><tr className="border-b border-border bg-muted/50">
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Account</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Debit (Dr)</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Credit (Cr)</th>
+        </tr></thead>
+        <tbody>{(data?.rows || []).map((r, i) => (
+          <tr key={i} className="border-b border-border last:border-0">
+            <td className="px-3 py-2 font-medium text-foreground">{r.account_name}</td>
+            <td className="px-3 py-2 text-muted-foreground capitalize">{r.type}</td>
+            <td className="px-3 py-2 text-right text-foreground">{r.debit > 0 ? formatNPR(r.debit, { showSymbol: false }) : '—'}</td>
+            <td className="px-3 py-2 text-right text-foreground">{r.credit > 0 ? formatNPR(r.credit, { showSymbol: false }) : '—'}</td>
+          </tr>
+        ))}</tbody>
+        {data && <tfoot><tr className="border-t-2 border-foreground/20 bg-muted/30">
+          <td colSpan={2} className="px-3 py-2 font-bold text-foreground">Total</td>
+          <td className="px-3 py-2 text-right font-bold text-foreground">{formatNPR(data.totalDebit, { showSymbol: false })}</td>
+          <td className="px-3 py-2 text-right font-bold text-foreground">{formatNPR(data.totalCredit, { showSymbol: false })}</td>
+        </tr></tfoot>}
+      </ReportTable>
+      {data && Math.abs(data.totalDebit - data.totalCredit) > 0.01 && (
+        <div className="text-xs text-muted-foreground italic">Note: Difference of {formatNPR(Math.abs(data.totalDebit - data.totalCredit))} — this simplified trial balance may not fully balance without a complete chart of accounts.</div>
+      )}
+    </div>
+  );
+}
+
+// ───────── Balance Sheet Summary ─────────
+function BalanceSheetReport({ dateTo }: { dateTo: string }) {
+  const { data, isLoading } = useBalanceSheetSummary(dateTo);
+
+  if (isLoading) return <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">Loading…</div>;
+  if (!data) return <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">No data.</div>;
+
+  const renderSection = (section: typeof data.assets) => (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="px-4 py-2 bg-muted/50 font-semibold text-sm text-foreground">{section.label}</div>
+      <table className="w-full text-sm">
+        <tbody>
+          {section.items.map((item, i) => (
+            <tr key={i} className="border-b border-border last:border-0">
+              <td className="px-4 py-2.5 text-foreground">{item.name}</td>
+              <td className="px-4 py-2.5 text-right text-foreground">{formatNPR(item.amount, { showSymbol: false })}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot><tr className="border-t-2 border-foreground/20 bg-muted/30">
+          <td className="px-4 py-2 font-bold text-foreground">Total {section.label}</td>
+          <td className="px-4 py-2 text-right font-bold text-foreground">{formatNPR(section.total)}</td>
+        </tr></tfoot>
+      </table>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4 max-w-lg">
+      {renderSection(data.assets)}
+      {renderSection(data.liabilities)}
+      <div className="rounded-lg border border-border bg-card p-4 flex justify-between items-center">
+        <span className="font-bold text-foreground">Owner's Equity (Assets − Liabilities)</span>
+        <span className={`text-lg font-bold ${data.equity >= 0 ? 'text-green-600 dark:text-green-400' : 'text-destructive'}`}>{formatNPR(data.equity)}</span>
+      </div>
+      <p className="text-xs text-muted-foreground italic">Note: This is a simplified balance sheet derived from invoice and payment data. It does not include a full chart of accounts.</p>
+    </div>
+  );
+}
+
+// ───────── Top Selling Items ─────────
+function TopSellingReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
+  const { data, isLoading } = useTopSellingItems(dateFrom, dateTo);
+  const handleExport = () => { if (!data?.rows.length) return; exportCSV(['Item', 'Code', 'Unit', 'Qty Sold', 'Revenue', 'Avg Rate'], data.rows.map(r => [r.item_name, r.code || '', r.unit, String(r.qty_sold), String(r.total_revenue), String(r.avg_rate.toFixed(2))]), `top-selling-${dateFrom}-${dateTo}.csv`); };
+
+  const chartData = useMemo(() => (data?.rows || []).slice(0, 10).map(r => ({ name: r.item_name.length > 15 ? r.item_name.substring(0, 15) + '…' : r.item_name, revenue: r.total_revenue })), [data]);
+
+  return (
+    <div className="space-y-4">
+      {chartData.length > 0 && (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Top 10 Items by Revenue</h3>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={chartData} layout="vertical" margin={{ left: 80 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} width={80} />
+              <RechartsTooltip formatter={(value: number) => formatNPR(value)} contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 12 }} />
+              <Bar dataKey="revenue" name="Revenue" fill="hsl(142, 71%, 45%)" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {data && (
+        <div className="flex gap-3">
+          <div className="rounded-lg border border-border bg-card p-3">
+            <div className="text-xs text-muted-foreground">Total Revenue</div>
+            <div className="text-lg font-bold text-foreground">{formatNPR(data.totalRevenue)}</div>
+          </div>
+          <div className="rounded-lg border border-border bg-card p-3">
+            <div className="text-xs text-muted-foreground">Total Qty Sold</div>
+            <div className="text-lg font-bold text-foreground">{data.totalQty}</div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-end"><ExportButton onClick={handleExport} disabled={!data?.rows.length} /></div>
+      <ReportTable loading={isLoading} empty={!data?.rows.length}>
+        <thead><tr className="border-b border-border bg-muted/50">
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">#</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Item</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Code</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Unit</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Qty Sold</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Revenue</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Avg Rate</th>
+        </tr></thead>
+        <tbody>{(data?.rows || []).map((r, i) => (
+          <tr key={i} className="border-b border-border last:border-0">
+            <td className="px-3 py-2 text-muted-foreground">{i + 1}</td>
+            <td className="px-3 py-2 font-medium text-foreground">{r.item_name}</td>
+            <td className="px-3 py-2 text-muted-foreground">{r.code || '—'}</td>
+            <td className="px-3 py-2 text-muted-foreground">{r.unit}</td>
+            <td className="px-3 py-2 text-right text-foreground">{r.qty_sold}</td>
+            <td className="px-3 py-2 text-right font-medium text-green-600 dark:text-green-400">{formatNPR(r.total_revenue, { showSymbol: false })}</td>
+            <td className="px-3 py-2 text-right text-muted-foreground">{formatNPR(r.avg_rate, { showSymbol: false })}</td>
+          </tr>
+        ))}</tbody>
+      </ReportTable>
+    </div>
+  );
+}
+
+// ───────── VAT Annex Report ─────────
+function VATAnnexReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
+  const [annexType, setAnnexType] = useState<'sales' | 'purchases'>('sales');
+  const { data, isLoading } = useVATAnnex(dateFrom, dateTo, annexType);
+  const annexLabel = annexType === 'sales' ? 'Annex 1 – Sales' : 'Annex 2 – Purchases';
+  const partyLabel = annexType === 'sales' ? 'Buyer' : 'Supplier';
+  const handleExport = () => { if (!data?.rows.length) return; exportCSV(['SN', 'Invoice #', 'Date', `${partyLabel} PAN`, `${partyLabel} Name`, 'Total Amount', 'Exempt', 'Taxable', 'VAT'], data.rows.map(r => [String(r.sn), r.invoice_number, r.date_bs, r.buyer_pan, r.buyer_name, String(r.total_sales), String(r.exempt_sales), String(r.taxable_amount), String(r.vat_amount)]), `vat-annex-${annexType}-${dateFrom}-${dateTo}.csv`); };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Tabs value={annexType} onValueChange={(v) => setAnnexType(v as any)}>
+          <TabsList className="h-7">
+            <TabsTrigger value="sales" className="text-[11px] px-2">Annex 1 (Sales)</TabsTrigger>
+            <TabsTrigger value="purchases" className="text-[11px] px-2">Annex 2 (Purchases)</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <ExportButton onClick={handleExport} disabled={!data?.rows.length} />
+      </div>
+      <h3 className="text-sm font-semibold text-foreground">{annexLabel}</h3>
+      <ReportTable loading={isLoading} empty={!data?.rows.length}>
+        <thead><tr className="border-b border-border bg-muted/50">
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">SN</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Invoice #</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Date</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">{partyLabel} PAN</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">{partyLabel} Name</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Total</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Exempt</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Taxable</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">VAT</th>
+        </tr></thead>
+        <tbody>{(data?.rows || []).map((r) => (
+          <tr key={r.sn} className="border-b border-border last:border-0">
+            <td className="px-3 py-2 text-muted-foreground">{r.sn}</td>
+            <td className="px-3 py-2 font-medium text-foreground">{r.invoice_number}</td>
+            <td className="px-3 py-2 text-muted-foreground">{r.date_bs}</td>
+            <td className="px-3 py-2 text-foreground">{r.buyer_pan || '—'}</td>
+            <td className="px-3 py-2 text-foreground">{r.buyer_name}</td>
+            <td className="px-3 py-2 text-right text-foreground">{formatNPR(r.total_sales, { showSymbol: false })}</td>
+            <td className="px-3 py-2 text-right text-muted-foreground">{r.exempt_sales > 0 ? formatNPR(r.exempt_sales, { showSymbol: false }) : '—'}</td>
+            <td className="px-3 py-2 text-right text-foreground">{r.taxable_amount > 0 ? formatNPR(r.taxable_amount, { showSymbol: false }) : '—'}</td>
+            <td className="px-3 py-2 text-right text-foreground">{r.vat_amount > 0 ? formatNPR(r.vat_amount, { showSymbol: false }) : '—'}</td>
+          </tr>
+        ))}</tbody>
+        {data?.totals && <tfoot><tr className="border-t-2 border-foreground/20 bg-muted/30">
+          <td colSpan={5} className="px-3 py-2 font-semibold text-foreground">Total ({data.rows.length})</td>
+          <td className="px-3 py-2 text-right font-semibold text-foreground">{formatNPR(data.totals.total_sales, { showSymbol: false })}</td>
+          <td className="px-3 py-2 text-right font-semibold text-muted-foreground">{formatNPR(data.totals.exempt_sales, { showSymbol: false })}</td>
+          <td className="px-3 py-2 text-right font-semibold text-foreground">{formatNPR(data.totals.taxable_amount, { showSymbol: false })}</td>
+          <td className="px-3 py-2 text-right font-bold text-foreground">{formatNPR(data.totals.vat_amount, { showSymbol: false })}</td>
         </tr></tfoot>}
       </ReportTable>
     </div>
