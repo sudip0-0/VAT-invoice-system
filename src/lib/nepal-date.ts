@@ -20,3 +20,23 @@ export function nepalTodayISO(): string {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
+
+/**
+ * Parse a "YYYY-MM-DD" string as a LOCAL date (not UTC).
+ * Avoids the common pitfall of `new Date("2025-02-26")` being parsed as UTC midnight,
+ * which can shift the date by ±1 day depending on local timezone.
+ */
+export function parseLocalDate(dateStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+/**
+ * Format a Date to "YYYY-MM-DD" using LOCAL date components (not toISOString which uses UTC).
+ */
+export function formatLocalDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}

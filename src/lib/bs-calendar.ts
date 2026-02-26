@@ -84,7 +84,10 @@ export function bsDayOfWeek(bs: BSDate): number {
 }
 
 export function adToBS(date: Date): BSDate {
-  const diffDays = Math.floor((date.getTime() - AD_REF_DATE.getTime()) / (1000 * 60 * 60 * 24));
+  // Use local date components to avoid timezone issues
+  const refLocal = new Date(2013, 3, 14); // April 14, 2013 local
+  const dateLocal = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((dateLocal.getTime() - refLocal.getTime()) / (1000 * 60 * 60 * 24));
   
   let bsYear = BS_REF_YEAR;
   let bsMonth = 1;
