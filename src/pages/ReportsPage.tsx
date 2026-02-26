@@ -412,8 +412,40 @@ function CashFlowReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string
   const { data, isLoading } = useCashFlow(dateFrom, dateTo);
   const handleExport = () => { if (!data?.rows.length) return; exportCSV(['Date', 'Description', 'Method', 'Inflow', 'Outflow'], data.rows.map(r => [r.date_bs, r.description, r.method, String(r.inflow), String(r.outflow)]), `cashflow-${dateFrom}-${dateTo}.csv`); };
 
+  // Aggregate by date for chart
+  const chartData = useMemo(() => {
+    if (!data?.rows.length) return [];
+    const map = new Map<string, { date_bs: string; inflow: number; outflow: number }>();
+    for (const r of data.rows) {
+      const existing = map.get(r.date_bs) || { date_bs: r.date_bs, inflow: 0, outflow: 0 };
+      existing.inflow += r.inflow;
+      existing.outflow += r.outflow;
+      map.set(r.date_bs, existing);
+    }
+    return Array.from(map.values());
+  }, [data]);
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      {/* Chart */}
+      {chartData.length > 0 && (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Inflow vs Outflow Trend</h3>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={chartData} barGap={2}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey="date_bs" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} angle={-35} textAnchor="end" height={50} />
+              <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+              <RechartsTooltip formatter={(value: number) => formatNPR(value)} contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="inflow" name="Inflow" fill="hsl(142, 71%, 45%)" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="outflow" name="Outflow" fill="hsl(var(--destructive))" radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Summary cards */}
       {data && (
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-lg border border-border bg-card p-3">
