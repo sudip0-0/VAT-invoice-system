@@ -21,9 +21,10 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
     enabled: !!business?.id && !!partyId && !!dateFrom && !!dateTo,
     queryFn: async () => {
       const { data: party, error: partyErr } = await supabase
-        .from('parties').select('opening_balance').eq('id', partyId!).single();
+        .from('parties').select('opening_balance, type').eq('id', partyId!).single();
       if (partyErr) throw partyErr;
       const openingBalance = Number(party?.opening_balance || 0);
+      const partyType = party?.type; // 'customer' | 'vendor' | 'both'
 
       const { data: invoices, error: invErr } = await supabase
         .from('invoices')
@@ -36,11 +37,17 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
 
       const { data: payments, error: payErr } = await supabase
         .from('payments')
-        .select('id, payment_date_bs, payment_date_ad, amount, method, reference, created_at')
+        .select('id, payment_date_bs, payment_date_ad, amount, method, reference, created_at, invoice_id')
         .eq('business_id', business!.id).eq('party_id', partyId!).eq('status', 'completed')
         .gte('payment_date_ad', dateFrom).lte('payment_date_ad', dateTo)
         .order('payment_date_ad');
       if (payErr) throw payErr;
+
+      // Build a set of invoice IDs to determine payment direction from linked invoice
+      const invoiceTypeMap = new Map<string, string>();
+      for (const inv of invoices || []) {
+        invoiceTypeMap.set(inv.id, inv.type);
+      }
 
       const entries: { date_ad: string; created_at: string; date_bs: string; description: string; debit: number; credit: number }[] = [];
       for (const inv of invoices || []) {
@@ -48,7 +55,26 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
         entries.push({ date_ad: inv.issued_date_ad, created_at: inv.created_at, date_bs: inv.issued_date_bs, description: `${isSale ? 'Invoice' : 'Bill'} ${inv.invoice_number}`, debit: isSale ? Number(inv.total_amount) : 0, credit: !isSale ? Number(inv.total_amount) : 0 });
       }
       for (const p of payments || []) {
-        entries.push({ date_ad: p.payment_date_ad, created_at: p.created_at, date_bs: p.payment_date_bs, description: `Payment (${p.method.replace('_', ' ')})${p.reference ? ` - ${p.reference}` : ''}`, debit: 0, credit: Number(p.amount) });
+        const amt = Number(p.amount);
+        const desc = `Payment (${p.method.replace('_', ' ')})${p.reference ? ` - ${p.reference}` : ''}`;
+        
+        // Determine if this is a payment in or payment out
+        let isPaymentOut = false;
+        if (p.invoice_id) {
+          const invType = invoiceTypeMap.get(p.invoice_id);
+          isPaymentOut = invType === 'purchase' || invType === 'purchase_return';
+        } else {
+          // Standalone payment: direction based on party type
+          isPaymentOut = partyType === 'vendor';
+        }
+
+        if (isPaymentOut) {
+          // Payment out to vendor = debit (reduces payable)
+          entries.push({ date_ad: p.payment_date_ad, created_at: p.created_at, date_bs: p.payment_date_bs, description: desc, debit: amt, credit: 0 });
+        } else {
+          // Payment in from customer = credit (reduces receivable)
+          entries.push({ date_ad: p.payment_date_ad, created_at: p.created_at, date_bs: p.payment_date_bs, description: desc, debit: 0, credit: amt });
+        }
       }
       entries.sort((a, b) => a.date_ad.localeCompare(b.date_ad) || a.created_at.localeCompare(b.created_at));
 
@@ -351,7 +377,7 @@ export function useCashFlow(dateFrom: string, dateTo: string) {
     queryFn: async () => {
       const { data: payments, error } = await supabase
         .from('payments')
-        .select('*, party:parties(name), invoice:invoices(type, invoice_number)')
+        .select('*, party:parties(name, type), invoice:invoices(type, invoice_number)')
         .eq('business_id', business!.id)
         .eq('status', 'completed')
         .gte('payment_date_ad', dateFrom)
@@ -361,16 +387,22 @@ export function useCashFlow(dateFrom: string, dateTo: string) {
 
       const rows: CashFlowRow[] = (payments || []).map((p: any) => {
         const isSaleRelated = p.invoice?.type === 'sale' || p.invoice?.type === 'sale_return';
+        const isPurchaseRelated = p.invoice?.type === 'purchase' || p.invoice?.type === 'purchase_return';
         const desc = p.invoice?.invoice_number
           ? `${p.party?.name || '—'} — ${p.invoice.invoice_number}`
           : `${p.party?.name || 'Standalone'} — ${p.reference || p.notes || 'Payment'}`;
+
+        // For standalone payments (no invoice), check party type
+        const isOutflow = isPurchaseRelated || (!p.invoice && p.party?.type === 'vendor');
+        const isInflow = !isOutflow;
+
         return {
           date_bs: p.payment_date_bs,
           date_ad: p.payment_date_ad,
           description: desc,
           method: p.method.replace('_', ' '),
-          inflow: isSaleRelated || !p.invoice ? Number(p.amount) : 0,
-          outflow: !isSaleRelated && p.invoice ? Number(p.amount) : 0,
+          inflow: isInflow ? Number(p.amount) : 0,
+          outflow: isOutflow ? Number(p.amount) : 0,
         };
       });
 
