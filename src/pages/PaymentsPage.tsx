@@ -123,6 +123,9 @@ export default function PaymentsPage() {
         pIn.push(p);
       } else if (invType && outTypes.has(invType)) {
         pOut.push(p);
+      } else if (!invType && p.party?.type === 'vendor') {
+        // Standalone payment to a vendor = payment out
+        pOut.push(p);
       } else {
         pIn.push(p);
       }
