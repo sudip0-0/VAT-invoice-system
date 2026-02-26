@@ -22,6 +22,54 @@ function getDefaultDateRange() {
   return { from, to };
 }
 
+type PresetKey = 'today' | 'this-week' | 'this-month' | 'last-month' | 'last-quarter' | 'this-fy';
+
+function getPresetRange(key: PresetKey): { from: string; to: string } {
+  const now = nepalNow();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const d = now.getDate();
+
+  switch (key) {
+    case 'today':
+      return { from: formatLocalDate(now), to: formatLocalDate(now) };
+    case 'this-week': {
+      const day = now.getDay(); // 0=Sun
+      const startOfWeek = new Date(y, m, d - day);
+      return { from: formatLocalDate(startOfWeek), to: formatLocalDate(now) };
+    }
+    case 'this-month':
+      return { from: formatLocalDate(new Date(y, m, 1)), to: formatLocalDate(now) };
+    case 'last-month': {
+      const firstLastMonth = new Date(y, m - 1, 1);
+      const lastLastMonth = new Date(y, m, 0);
+      return { from: formatLocalDate(firstLastMonth), to: formatLocalDate(lastLastMonth) };
+    }
+    case 'last-quarter': {
+      const qStart = Math.floor(m / 3) * 3;
+      const lastQStart = new Date(y, qStart - 3, 1);
+      const lastQEnd = new Date(y, qStart, 0);
+      return { from: formatLocalDate(lastQStart), to: formatLocalDate(lastQEnd) };
+    }
+    case 'this-fy': {
+      // Nepal FY starts mid-July (Shrawan). Approximate: if before July 16, FY started last year
+      const fyStartYear = m < 6 || (m === 6 && d < 16) ? y - 1 : y;
+      return { from: `${fyStartYear}-07-16`, to: formatLocalDate(now) };
+    }
+    default:
+      return getDefaultDateRange();
+  }
+}
+
+const PRESETS: { key: PresetKey; label: string }[] = [
+  { key: 'today', label: 'Today' },
+  { key: 'this-week', label: 'This Week' },
+  { key: 'this-month', label: 'This Month' },
+  { key: 'last-month', label: 'Last Month' },
+  { key: 'last-quarter', label: 'Last Quarter' },
+  { key: 'this-fy', label: 'This FY' },
+];
+
 function exportCSV(headers: string[], rows: string[][], filename: string) {
   const csv = [headers.join(','), ...rows.map((r) => r.map((c) => `"${c}"`).join(','))].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -62,6 +110,19 @@ export default function ReportsPage() {
   const defaults = getDefaultDateRange();
   const [dateFrom, setDateFrom] = useState(defaults.from);
   const [dateTo, setDateTo] = useState(defaults.to);
+  const [activePreset, setActivePreset] = useState<PresetKey | null>('this-month');
+
+  const applyPreset = (key: PresetKey) => {
+    const range = getPresetRange(key);
+    setDateFrom(range.from);
+    setDateTo(range.to);
+    setActivePreset(key);
+  };
+
+  const handleDateChange = (setter: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setter(e.target.value);
+    setActivePreset(null);
+  };
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -69,14 +130,27 @@ export default function ReportsPage() {
         <h1 className="text-xl font-bold text-foreground">Reports</h1>
       </div>
 
-      <div className="flex items-end gap-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {PRESETS.map((p) => (
+            <Button
+              key={p.key}
+              variant={activePreset === p.key ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 text-[11px] px-2.5"
+              onClick={() => applyPreset(p.key)}
+            >
+              {p.label}
+            </Button>
+          ))}
+        </div>
         <div>
           <Label className="text-xs">From</Label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-9 text-sm w-40" />
+          <Input type="date" value={dateFrom} onChange={handleDateChange(setDateFrom)} className="h-9 text-sm w-40" />
         </div>
         <div>
           <Label className="text-xs">To</Label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-9 text-sm w-40" />
+          <Input type="date" value={dateTo} onChange={handleDateChange(setDateTo)} className="h-9 text-sm w-40" />
         </div>
       </div>
 
