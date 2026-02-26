@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { adToBS, formatBSShort } from '@/lib/bs-calendar';
-import { nepalTodayISO } from '@/lib/nepal-date';
+import { nepalTodayISO, parseLocalDate } from '@/lib/nepal-date';
 
 interface PaymentDialogProps {
   open: boolean;
@@ -37,7 +37,7 @@ export default function PaymentDialog({ open, onOpenChange, invoiceId, partyId, 
   const [notes, setNotes] = useState('');
 
   const dateBs = (() => {
-    try { return formatBSShort(adToBS(new Date(dateAd))); }
+    try { return formatBSShort(adToBS(parseLocalDate(dateAd))); }
     catch { return ''; }
   })();
 
