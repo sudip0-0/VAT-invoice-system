@@ -8,11 +8,12 @@ import { Download } from 'lucide-react';
 import { useSalesReport, useVATSummary, usePartyLedger } from '@/hooks/useReports';
 import { useParties } from '@/hooks/useParties';
 import { formatNPR } from '@/lib/nepal-format';
+import { nepalNow, formatLocalDate } from '@/lib/nepal-date';
 
 function getDefaultDateRange() {
-  const now = new Date();
-  const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  const to = now.toISOString().slice(0, 10);
+  const now = nepalNow();
+  const from = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1));
+  const to = formatLocalDate(now);
   return { from, to };
 }
 

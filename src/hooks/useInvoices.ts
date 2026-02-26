@@ -87,7 +87,8 @@ export function useInvoices() {
       // Record payment if amount received
       if (paidAmount > 0 && desiredStatus !== 'draft') {
         const partyId = invoice.customer_id || invoice.vendor_id || null;
-        const now = new Date();
+        const { nepalNow, formatLocalDate } = await import('@/lib/nepal-date');
+        const now = nepalNow();
         const { adToBS, formatBSShort } = await import('@/lib/bs-calendar');
         const bsDate = adToBS(now);
 
@@ -98,7 +99,7 @@ export function useInvoices() {
           amount: paidAmount,
           method: 'cash' as any,
           status: 'completed' as any,
-          payment_date_ad: now.toISOString().slice(0, 10),
+          payment_date_ad: formatLocalDate(now),
           payment_date_bs: formatBSShort(bsDate),
           notes: `Payment received on invoice ${invoice.invoice_number}`,
         });
