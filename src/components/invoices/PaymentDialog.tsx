@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { adToBS, formatBSShort } from '@/lib/bs-calendar';
+import { nepalTodayISO } from '@/lib/nepal-date';
 
 interface PaymentDialogProps {
   open: boolean;
@@ -28,7 +29,7 @@ const METHODS = [
 ];
 
 export default function PaymentDialog({ open, onOpenChange, invoiceId, partyId, balanceDue, onSubmit, loading }: PaymentDialogProps) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = nepalTodayISO();
   const [amount, setAmount] = useState(String(balanceDue));
   const [method, setMethod] = useState('cash');
   const [dateAd, setDateAd] = useState(today);
