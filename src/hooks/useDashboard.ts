@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useBusiness } from '@/contexts/BusinessContext';
+import { nepalNow, formatLocalDate } from '@/lib/nepal-date';
 
 export function useDashboardData() {
   const { business } = useBusiness();
@@ -37,9 +38,9 @@ export function useDashboardData() {
       const items = itemsRes.data || [];
       const parties = partiesRes.data || [];
 
-      const now = new Date();
-      const todayStr = now.toISOString().slice(0, 10);
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+      const now = nepalNow();
+      const todayStr = formatLocalDate(now);
+      const monthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1));
 
       // Today's sales
       const todaySales = invoices

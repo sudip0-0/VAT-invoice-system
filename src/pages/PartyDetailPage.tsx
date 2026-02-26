@@ -5,6 +5,7 @@ import { useParties, type PartyWithBalance } from '@/hooks/useParties';
 import { usePartyLedger } from '@/hooks/useReports';
 import { useAllPayments } from '@/hooks/usePayments';
 import { formatNPR } from '@/lib/nepal-format';
+import { nepalNow, formatLocalDate } from '@/lib/nepal-date';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,9 +14,9 @@ import StandalonePaymentDialog from '@/components/payments/StandalonePaymentDial
 import { useToast } from '@/hooks/use-toast';
 
 function getDefaultDateRange() {
-  const now = new Date();
-  const from = new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10);
-  const to = now.toISOString().slice(0, 10);
+  const now = nepalNow();
+  const from = formatLocalDate(new Date(now.getFullYear(), 0, 1));
+  const to = formatLocalDate(now);
   return { from, to };
 }
 
