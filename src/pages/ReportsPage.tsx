@@ -3,7 +3,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { Download, AlertTriangle } from 'lucide-react';
+import { Download, AlertTriangle, ChevronRight } from 'lucide-react';
 import {
   useSalesReport, useVATSummary, useProfitLoss, useBillWiseProfit,
   useCashFlow, usePartyStatement, useSalePurchaseByParty, useStockSummary, useAllParties,
@@ -15,12 +15,16 @@ import {
 import {
   useTrialBalance, useBalanceSheetSummary, useTopSellingItems, useVATAnnex,
 } from '@/hooks/useReportsExtra2';
+import {
+  usePartyReportByItem, useItemReportByParty, useItemWiseProfit,
+} from '@/hooks/useReportsExtra3';
 import { formatNPR } from '@/lib/nepal-format';
 import { nepalNow, formatLocalDate } from '@/lib/nepal-date';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, Legend, Cell,
 } from 'recharts';
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '@/components/ui/accordion';
 
 function getDefaultDateRange() {
   const now = nepalNow();
@@ -41,7 +45,7 @@ function getPresetRange(key: PresetKey): { from: string; to: string } {
     case 'today':
       return { from: formatLocalDate(now), to: formatLocalDate(now) };
     case 'this-week': {
-      const day = now.getDay(); // 0=Sun
+      const day = now.getDay();
       const startOfWeek = new Date(y, m, d - day);
       return { from: formatLocalDate(startOfWeek), to: formatLocalDate(now) };
     }
@@ -59,7 +63,6 @@ function getPresetRange(key: PresetKey): { from: string; to: string } {
       return { from: formatLocalDate(lastQStart), to: formatLocalDate(lastQEnd) };
     }
     case 'this-fy': {
-      // Nepal FY starts mid-July (Shrawan). Approximate: if before July 16, FY started last year
       const fyStartYear = m < 6 || (m === 6 && d < 16) ? y - 1 : y;
       return { from: `${fyStartYear}-07-16`, to: formatLocalDate(now) };
     }
@@ -88,7 +91,6 @@ function exportCSV(headers: string[], rows: string[][], filename: string) {
   URL.revokeObjectURL(url);
 }
 
-// Reusable table wrapper
 function ReportTable({ children, loading, empty }: { children: React.ReactNode; loading: boolean; empty: boolean }) {
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -113,11 +115,87 @@ function ExportButton({ onClick, disabled }: { onClick: () => void; disabled: bo
   );
 }
 
+// ── Report categories & navigation ──
+
+interface ReportItem {
+  key: string;
+  label: string;
+}
+
+interface ReportCategory {
+  id: string;
+  label: string;
+  reports: ReportItem[];
+}
+
+const REPORT_CATEGORIES: ReportCategory[] = [
+  {
+    id: 'sales',
+    label: '📊 Sales & Purchase',
+    reports: [
+      { key: 'sales', label: 'Sales / Purchase' },
+      { key: 'item-wise', label: 'Item-wise S/P' },
+      { key: 'sp-party', label: 'S/P by Party' },
+      { key: 'party-by-item', label: 'Party Report by Item' },
+      { key: 'item-by-party', label: 'Item Report by Party' },
+      { key: 'top-selling', label: 'Top Selling Items' },
+    ],
+  },
+  {
+    id: 'profit',
+    label: '💰 Profit & Analysis',
+    reports: [
+      { key: 'pnl', label: 'Profit & Loss' },
+      { key: 'bill-profit', label: 'Bill-wise Profit' },
+      { key: 'item-profit', label: 'Item-wise Profit' },
+    ],
+  },
+  {
+    id: 'financial',
+    label: '🏦 Financial',
+    reports: [
+      { key: 'trial-balance', label: 'Trial Balance' },
+      { key: 'balance-sheet', label: 'Balance Sheet' },
+      { key: 'cashflow', label: 'Cash Flow' },
+      { key: 'daybook', label: 'Day Book' },
+      { key: 'daily-summary', label: 'Daily Summary' },
+    ],
+  },
+  {
+    id: 'party',
+    label: '👥 Party & Outstanding',
+    reports: [
+      { key: 'party-stmt', label: 'Party Statement' },
+      { key: 'outstanding', label: 'Outstanding' },
+      { key: 'all-parties', label: 'All Parties' },
+      { key: 'cndn', label: 'CN / DN Register' },
+    ],
+  },
+  {
+    id: 'tax',
+    label: '🧾 Tax & Compliance',
+    reports: [
+      { key: 'vat', label: 'VAT Summary' },
+      { key: 'vat-return', label: 'VAT Return' },
+      { key: 'vat-annex', label: 'VAT Annex' },
+    ],
+  },
+  {
+    id: 'inventory',
+    label: '📦 Inventory',
+    reports: [
+      { key: 'stock', label: 'Stock Summary' },
+      { key: 'low-stock', label: 'Low Stock Alert' },
+    ],
+  },
+];
+
 export default function ReportsPage() {
   const defaults = getDefaultDateRange();
   const [dateFrom, setDateFrom] = useState(defaults.from);
   const [dateTo, setDateTo] = useState(defaults.to);
   const [activePreset, setActivePreset] = useState<PresetKey | null>('this-month');
+  const [activeReport, setActiveReport] = useState('sales');
 
   const applyPreset = (key: PresetKey) => {
     const range = getPresetRange(key);
@@ -131,12 +209,16 @@ export default function ReportsPage() {
     setActivePreset(null);
   };
 
+  // Find active category for default accordion open
+  const activeCategoryId = REPORT_CATEGORIES.find(c => c.reports.some(r => r.key === activeReport))?.id || 'sales';
+
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-foreground">Reports</h1>
       </div>
 
+      {/* Date controls */}
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-wrap gap-1.5">
           {PRESETS.map((p) => (
@@ -161,51 +243,85 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="sales">
-        <TabsList className="h-auto flex-wrap gap-1">
-          <TabsTrigger value="sales" className="text-xs px-3">Sales / Purchase</TabsTrigger>
-          <TabsTrigger value="item-wise" className="text-xs px-3">Item-wise S/P</TabsTrigger>
-          <TabsTrigger value="vat" className="text-xs px-3">VAT Summary</TabsTrigger>
-          <TabsTrigger value="vat-return" className="text-xs px-3">VAT Return</TabsTrigger>
-          <TabsTrigger value="pnl" className="text-xs px-3">Profit & Loss</TabsTrigger>
-          <TabsTrigger value="bill-profit" className="text-xs px-3">Bill-wise Profit</TabsTrigger>
-          <TabsTrigger value="cashflow" className="text-xs px-3">Cash Flow</TabsTrigger>
-          <TabsTrigger value="daybook" className="text-xs px-3">Day Book</TabsTrigger>
-          <TabsTrigger value="daily-summary" className="text-xs px-3">Daily Summary</TabsTrigger>
-          <TabsTrigger value="outstanding" className="text-xs px-3">Outstanding</TabsTrigger>
-          <TabsTrigger value="party-stmt" className="text-xs px-3">Party Statement</TabsTrigger>
-          <TabsTrigger value="sp-party" className="text-xs px-3">S/P by Party</TabsTrigger>
-          <TabsTrigger value="cndn" className="text-xs px-3">CN / DN Register</TabsTrigger>
-          <TabsTrigger value="stock" className="text-xs px-3">Stock Summary</TabsTrigger>
-          <TabsTrigger value="low-stock" className="text-xs px-3">Low Stock Alert</TabsTrigger>
-          <TabsTrigger value="all-parties" className="text-xs px-3">All Parties</TabsTrigger>
-          <TabsTrigger value="trial-balance" className="text-xs px-3">Trial Balance</TabsTrigger>
-          <TabsTrigger value="balance-sheet" className="text-xs px-3">Balance Sheet</TabsTrigger>
-          <TabsTrigger value="top-selling" className="text-xs px-3">Top Selling Items</TabsTrigger>
-          <TabsTrigger value="vat-annex" className="text-xs px-3">VAT Annex</TabsTrigger>
-        </TabsList>
+      {/* Layout: sidebar + content */}
+      <div className="flex gap-4 min-h-[500px]">
+        {/* Sidebar */}
+        <div className="w-56 shrink-0 hidden md:block">
+          <div className="rounded-lg border border-border bg-card overflow-hidden sticky top-4">
+            <Accordion type="multiple" defaultValue={[activeCategoryId]}>
+              {REPORT_CATEGORIES.map((cat) => (
+                <AccordionItem key={cat.id} value={cat.id} className="border-b last:border-0">
+                  <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold text-foreground hover:no-underline">
+                    {cat.label}
+                  </AccordionTrigger>
+                  <AccordionContent className="pb-1">
+                    <div className="flex flex-col">
+                      {cat.reports.map((r) => (
+                        <button
+                          key={r.key}
+                          onClick={() => setActiveReport(r.key)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs text-left transition-colors ${
+                            activeReport === r.key
+                              ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary'
+                              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                          }`}
+                        >
+                          <ChevronRight className={`h-3 w-3 shrink-0 ${activeReport === r.key ? 'opacity-100' : 'opacity-0'}`} />
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </div>
+        </div>
 
-        <TabsContent value="sales" className="mt-4"><SalesReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="item-wise" className="mt-4"><ItemWiseReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="vat" className="mt-4"><VATReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="vat-return" className="mt-4"><VATReturnReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="pnl" className="mt-4"><PnLReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="bill-profit" className="mt-4"><BillProfitReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="cashflow" className="mt-4"><CashFlowReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="daybook" className="mt-4"><DayBookReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="daily-summary" className="mt-4"><DailySummaryReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="outstanding" className="mt-4"><OutstandingReportView dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="party-stmt" className="mt-4"><PartyStatementReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="sp-party" className="mt-4"><SalePurchaseByPartyReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="cndn" className="mt-4"><CNDNRegisterReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="stock" className="mt-4"><StockSummaryReport /></TabsContent>
-        <TabsContent value="low-stock" className="mt-4"><LowStockAlertReport /></TabsContent>
-        <TabsContent value="all-parties" className="mt-4"><AllPartiesReport /></TabsContent>
-        <TabsContent value="trial-balance" className="mt-4"><TrialBalanceReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="balance-sheet" className="mt-4"><BalanceSheetReport dateTo={dateTo} /></TabsContent>
-        <TabsContent value="top-selling" className="mt-4"><TopSellingReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-        <TabsContent value="vat-annex" className="mt-4"><VATAnnexReport dateFrom={dateFrom} dateTo={dateTo} /></TabsContent>
-      </Tabs>
+        {/* Mobile: dropdown-style tabs */}
+        <div className="md:hidden w-full mb-3">
+          <select
+            value={activeReport}
+            onChange={(e) => setActiveReport(e.target.value)}
+            className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            {REPORT_CATEGORIES.map(cat => (
+              <optgroup key={cat.id} label={cat.label}>
+                {cat.reports.map(r => (
+                  <option key={r.key} value={r.key}>{r.label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+
+        {/* Report content */}
+        <div className="flex-1 min-w-0">
+          {activeReport === 'sales' && <SalesReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'item-wise' && <ItemWiseReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'vat' && <VATReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'vat-return' && <VATReturnReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'pnl' && <PnLReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'bill-profit' && <BillProfitReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'item-profit' && <ItemProfitReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'cashflow' && <CashFlowReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'daybook' && <DayBookReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'daily-summary' && <DailySummaryReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'outstanding' && <OutstandingReportView dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'party-stmt' && <PartyStatementReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'sp-party' && <SalePurchaseByPartyReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'party-by-item' && <PartyByItemReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'item-by-party' && <ItemByPartyReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'cndn' && <CNDNRegisterReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'stock' && <StockSummaryReport />}
+          {activeReport === 'low-stock' && <LowStockAlertReport />}
+          {activeReport === 'all-parties' && <AllPartiesReport />}
+          {activeReport === 'trial-balance' && <TrialBalanceReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'balance-sheet' && <BalanceSheetReport dateTo={dateTo} />}
+          {activeReport === 'top-selling' && <TopSellingReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'vat-annex' && <VATAnnexReport dateFrom={dateFrom} dateTo={dateTo} />}
+        </div>
+      </div>
     </div>
   );
 }
@@ -340,7 +456,6 @@ function PnLReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
 
   return (
     <div className="space-y-4">
-      {/* Chart */}
       <div className="rounded-lg border border-border bg-card p-4">
         <h3 className="text-sm font-semibold text-foreground mb-3">P&L Overview</h3>
         <ResponsiveContainer width="100%" height={220}>
@@ -357,8 +472,6 @@ function PnLReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
           </BarChart>
         </ResponsiveContainer>
       </div>
-
-      {/* Table */}
       <div className="rounded-lg border border-border bg-card overflow-hidden max-w-lg">
         <table className="w-full text-sm">
           <tbody>
@@ -418,12 +531,71 @@ function BillProfitReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: stri
   );
 }
 
+// ───────── Item-wise Profit (NEW) ─────────
+function ItemProfitReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
+  const { data, isLoading } = useItemWiseProfit(dateFrom, dateTo);
+  const handleExport = () => { if (!data?.rows.length) return; exportCSV(['Item', 'Code', 'Unit', 'Qty Sold', 'Sale Amt', 'Cost Amt', 'Profit', 'Margin %'], data.rows.map(r => [r.item_name, r.code || '', r.unit, String(r.qty_sold), String(r.sale_amount), String(r.cost_amount), String(r.profit), r.margin_pct.toFixed(1)]), `item-profit-${dateFrom}-${dateTo}.csv`); };
+
+  return (
+    <div className="space-y-3">
+      {data?.totals && (
+        <div className="flex gap-3 flex-wrap">
+          <div className="rounded-lg border border-border bg-card p-3">
+            <div className="text-xs text-muted-foreground">Total Revenue</div>
+            <div className="text-lg font-bold text-foreground">{formatNPR(data.totals.sale_amount)}</div>
+          </div>
+          <div className="rounded-lg border border-border bg-card p-3">
+            <div className="text-xs text-muted-foreground">Total Cost</div>
+            <div className="text-lg font-bold text-muted-foreground">{formatNPR(data.totals.cost_amount)}</div>
+          </div>
+          <div className="rounded-lg border border-border bg-card p-3">
+            <div className="text-xs text-muted-foreground">Total Profit</div>
+            <div className={`text-lg font-bold ${data.totals.profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-destructive'}`}>{formatNPR(data.totals.profit)}</div>
+          </div>
+        </div>
+      )}
+      <div className="flex justify-end"><ExportButton onClick={handleExport} disabled={!data?.rows.length} /></div>
+      <ReportTable loading={isLoading} empty={!data?.rows.length}>
+        <thead><tr className="border-b border-border bg-muted/50">
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Item</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Code</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Unit</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Qty Sold</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Sale Amt</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Cost Amt</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Profit</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Margin %</th>
+        </tr></thead>
+        <tbody>{(data?.rows || []).map((r, i) => (
+          <tr key={i} className="border-b border-border last:border-0">
+            <td className="px-3 py-2 font-medium text-foreground">{r.item_name}</td>
+            <td className="px-3 py-2 text-muted-foreground">{r.code || '—'}</td>
+            <td className="px-3 py-2 text-muted-foreground">{r.unit}</td>
+            <td className="px-3 py-2 text-right text-foreground">{r.qty_sold}</td>
+            <td className="px-3 py-2 text-right text-foreground">{formatNPR(r.sale_amount, { showSymbol: false })}</td>
+            <td className="px-3 py-2 text-right text-muted-foreground">{formatNPR(r.cost_amount, { showSymbol: false })}</td>
+            <td className={`px-3 py-2 text-right font-medium ${r.profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-destructive'}`}>{formatNPR(r.profit, { showSymbol: false })}</td>
+            <td className="px-3 py-2 text-right text-muted-foreground">{r.margin_pct.toFixed(1)}%</td>
+          </tr>
+        ))}</tbody>
+        {data?.totals && <tfoot><tr className="border-t-2 border-foreground/20 bg-muted/30">
+          <td colSpan={3} className="px-3 py-2 font-semibold text-foreground">Total ({data.rows.length} items)</td>
+          <td className="px-3 py-2 text-right font-semibold text-foreground">{data.totals.qty_sold}</td>
+          <td className="px-3 py-2 text-right font-semibold text-foreground">{formatNPR(data.totals.sale_amount, { showSymbol: false })}</td>
+          <td className="px-3 py-2 text-right font-semibold text-muted-foreground">{formatNPR(data.totals.cost_amount, { showSymbol: false })}</td>
+          <td className={`px-3 py-2 text-right font-bold ${data.totals.profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-destructive'}`}>{formatNPR(data.totals.profit, { showSymbol: false })}</td>
+          <td className="px-3 py-2 text-right text-muted-foreground">{data.totals.sale_amount > 0 ? ((data.totals.profit / data.totals.sale_amount) * 100).toFixed(1) : '0.0'}%</td>
+        </tr></tfoot>}
+      </ReportTable>
+    </div>
+  );
+}
+
 // ───────── Cash Flow ─────────
 function CashFlowReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
   const { data, isLoading } = useCashFlow(dateFrom, dateTo);
   const handleExport = () => { if (!data?.rows.length) return; exportCSV(['Date', 'Description', 'Method', 'Inflow', 'Outflow'], data.rows.map(r => [r.date_bs, r.description, r.method, String(r.inflow), String(r.outflow)]), `cashflow-${dateFrom}-${dateTo}.csv`); };
 
-  // Aggregate by date for chart
   const chartData = useMemo(() => {
     if (!data?.rows.length) return [];
     const map = new Map<string, { date_bs: string; inflow: number; outflow: number }>();
@@ -438,7 +610,6 @@ function CashFlowReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string
 
   return (
     <div className="space-y-4">
-      {/* Chart */}
       {chartData.length > 0 && (
         <div className="rounded-lg border border-border bg-card p-4">
           <h3 className="text-sm font-semibold text-foreground mb-3">Inflow vs Outflow Trend</h3>
@@ -455,8 +626,6 @@ function CashFlowReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string
           </ResponsiveContainer>
         </div>
       )}
-
-      {/* Summary cards */}
       {data && (
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-lg border border-border bg-card p-3">
@@ -556,6 +725,110 @@ function SalePurchaseByPartyReport({ dateFrom, dateTo }: { dateFrom: string; dat
             <td className="px-3 py-2 text-right font-medium text-foreground">{formatNPR(r.total_amount, { showSymbol: false })}</td>
             <td className="px-3 py-2 text-right text-muted-foreground">{r.invoice_count}</td>
           </tr>
+        ))}</tbody>
+      </ReportTable>
+    </div>
+  );
+}
+
+// ───────── Party Report by Item (NEW) ─────────
+function PartyByItemReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
+  const { data, isLoading } = usePartyReportByItem(dateFrom, dateTo);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const handleExport = () => {
+    if (!data?.length) return;
+    const rows: string[][] = [];
+    for (const p of data) {
+      for (const it of p.items) {
+        rows.push([p.party_name, p.party_type, it.item_name, it.code || '', it.unit, String(it.qty), String(it.amount)]);
+      }
+    }
+    exportCSV(['Party', 'Type', 'Item', 'Code', 'Unit', 'Qty', 'Amount'], rows, `party-by-item-${dateFrom}-${dateTo}.csv`);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end"><ExportButton onClick={handleExport} disabled={!data?.length} /></div>
+      <ReportTable loading={isLoading} empty={!data?.length}>
+        <thead><tr className="border-b border-border bg-muted/50">
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Party</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Items</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Total Amount</th>
+        </tr></thead>
+        <tbody>{(data || []).map((p, i) => (
+          <>
+            <tr key={`party-${i}`} className="border-b border-border cursor-pointer hover:bg-muted/30" onClick={() => setExpanded(expanded === p.party_name ? null : p.party_name)}>
+              <td className="px-3 py-2 font-medium text-foreground">
+                <span className="mr-1 text-muted-foreground">{expanded === p.party_name ? '▼' : '▶'}</span>
+                {p.party_name}
+              </td>
+              <td className="px-3 py-2 text-muted-foreground capitalize">{p.party_type}</td>
+              <td className="px-3 py-2 text-right text-muted-foreground">{p.items.length}</td>
+              <td className="px-3 py-2 text-right font-medium text-foreground">{formatNPR(p.total_amount, { showSymbol: false })}</td>
+            </tr>
+            {expanded === p.party_name && p.items.map((it, j) => (
+              <tr key={`item-${i}-${j}`} className="border-b border-border bg-muted/20">
+                <td className="px-3 py-1.5 pl-8 text-foreground">{it.item_name}</td>
+                <td className="px-3 py-1.5 text-muted-foreground">{it.code || '—'} · {it.unit}</td>
+                <td className="px-3 py-1.5 text-right text-foreground">{it.qty}</td>
+                <td className="px-3 py-1.5 text-right text-foreground">{formatNPR(it.amount, { showSymbol: false })}</td>
+              </tr>
+            ))}
+          </>
+        ))}</tbody>
+      </ReportTable>
+    </div>
+  );
+}
+
+// ───────── Item Report by Party (NEW) ─────────
+function ItemByPartyReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
+  const { data, isLoading } = useItemReportByParty(dateFrom, dateTo);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const handleExport = () => {
+    if (!data?.length) return;
+    const rows: string[][] = [];
+    for (const it of data) {
+      for (const p of it.parties) {
+        rows.push([it.item_name, it.code || '', it.unit, p.party_name, p.party_type, String(p.qty), String(p.amount)]);
+      }
+    }
+    exportCSV(['Item', 'Code', 'Unit', 'Party', 'Type', 'Qty', 'Amount'], rows, `item-by-party-${dateFrom}-${dateTo}.csv`);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end"><ExportButton onClick={handleExport} disabled={!data?.length} /></div>
+      <ReportTable loading={isLoading} empty={!data?.length}>
+        <thead><tr className="border-b border-border bg-muted/50">
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Item</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Code</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Total Qty</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Total Amount</th>
+        </tr></thead>
+        <tbody>{(data || []).map((it, i) => (
+          <>
+            <tr key={`item-${i}`} className="border-b border-border cursor-pointer hover:bg-muted/30" onClick={() => setExpanded(expanded === it.item_name ? null : it.item_name)}>
+              <td className="px-3 py-2 font-medium text-foreground">
+                <span className="mr-1 text-muted-foreground">{expanded === it.item_name ? '▼' : '▶'}</span>
+                {it.item_name}
+              </td>
+              <td className="px-3 py-2 text-muted-foreground">{it.code || '—'} · {it.unit}</td>
+              <td className="px-3 py-2 text-right text-foreground">{it.total_qty}</td>
+              <td className="px-3 py-2 text-right font-medium text-foreground">{formatNPR(it.total_amount, { showSymbol: false })}</td>
+            </tr>
+            {expanded === it.item_name && it.parties.map((p, j) => (
+              <tr key={`party-${i}-${j}`} className="border-b border-border bg-muted/20">
+                <td className="px-3 py-1.5 pl-8 text-foreground">{p.party_name}</td>
+                <td className="px-3 py-1.5 text-muted-foreground capitalize">{p.party_type}</td>
+                <td className="px-3 py-1.5 text-right text-foreground">{p.qty}</td>
+                <td className="px-3 py-1.5 text-right text-foreground">{formatNPR(p.amount, { showSymbol: false })}</td>
+              </tr>
+            ))}
+          </>
         ))}</tbody>
       </ReportTable>
     </div>
@@ -919,7 +1192,6 @@ function DailySummaryReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: st
 
   return (
     <div className="space-y-4">
-      {/* Chart */}
       {data && data.rows.length > 0 && (
         <div className="rounded-lg border border-border bg-card p-4">
           <h3 className="text-sm font-semibold text-foreground mb-3">Daily Sales vs Purchases</h3>
