@@ -36,8 +36,9 @@ export function useParties() {
           .neq('status', 'cancelled'),
         supabase
           .from('payments')
-          .select('party_id, amount, invoice_id')
+          .select('party_id, amount, invoice_id, method')
           .eq('business_id', business.id)
+          .eq('status', 'completed')
           .is('invoice_id', null), // only standalone payments not tied to invoices
       ]);
 
@@ -60,10 +61,21 @@ export function useParties() {
         }
       }
 
-      // Standalone payments reduce outstanding
+      // Standalone payments: need party type to determine direction
+      const partyTypeMap: Record<string, string> = {};
+      for (const p of parties) {
+        partyTypeMap[p.id] = p.type;
+      }
       for (const pay of standalonePayments) {
         if (pay.party_id) {
-          balanceMap[pay.party_id] = (balanceMap[pay.party_id] || 0) - Number(pay.amount);
+          const pType = partyTypeMap[pay.party_id];
+          if (pType === 'vendor') {
+            // Payment out to vendor reduces payable (makes balance less negative)
+            balanceMap[pay.party_id] = (balanceMap[pay.party_id] || 0) + Number(pay.amount);
+          } else {
+            // Payment in from customer reduces receivable
+            balanceMap[pay.party_id] = (balanceMap[pay.party_id] || 0) - Number(pay.amount);
+          }
         }
       }
 
