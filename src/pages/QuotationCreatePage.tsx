@@ -13,6 +13,7 @@ import { useItems } from '@/hooks/useItems';
 import { useBusiness } from '@/contexts/BusinessContext';
 import { formatNPR } from '@/lib/nepal-format';
 import { type BSDate, todayBS, formatBSShort, getVATPeriod, adToBS } from '@/lib/bs-calendar';
+import { nepalTodayISO } from '@/lib/nepal-date';
 import BSDatePicker from '@/components/shared/BSDatePicker';
 
 interface LineItem {
@@ -55,12 +56,12 @@ export default function QuotationCreatePage() {
   const { items: inventoryItems } = useItems();
   const { data: taxRates = [] } = useTaxRates();
 
-  const today = new Date();
   const todayBs = todayBS();
+  const todayAd = nepalTodayISO();
 
   const [partyId, setPartyId] = useState('');
   const [issuedDateBs, setIssuedDateBs] = useState<BSDate>(todayBs);
-  const [issuedDateAd, setIssuedDateAd] = useState(today.toISOString().slice(0, 10));
+  const [issuedDateAd, setIssuedDateAd] = useState(todayAd);
   const [dueDateBs, setDueDateBs] = useState<BSDate | null>(null);
   const [dueDateAd, setDueDateAd] = useState('');
   const [isVat, setIsVat] = useState(business?.is_vat_registered ?? false);

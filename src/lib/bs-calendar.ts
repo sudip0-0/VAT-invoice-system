@@ -1,4 +1,5 @@
 // Bikram Sambat calendar data and conversion utilities
+import { nepalNow } from '@/lib/nepal-date';
 
 export interface BSDate {
   year: number;
@@ -115,7 +116,7 @@ export function adToBS(date: Date): BSDate {
 }
 
 export function todayBS(): BSDate {
-  return adToBS(new Date());
+  return adToBS(nepalNow());
 }
 
 export function formatBS(bs: BSDate, format: string = 'YYYY MMMM DD'): string {

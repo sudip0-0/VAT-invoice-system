@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { adToBS, formatBSShort } from '@/lib/bs-calendar';
+import { nepalTodayISO } from '@/lib/nepal-date';
 import { useParties } from '@/hooks/useParties';
 
 interface StandalonePaymentDialogProps {
@@ -33,7 +34,7 @@ export default function StandalonePaymentDialog({
   onSubmit,
   loading,
 }: StandalonePaymentDialogProps) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = nepalTodayISO();
   const { data: parties = [] } = useParties();
 
   const [amount, setAmount] = useState('');

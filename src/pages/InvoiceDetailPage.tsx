@@ -15,6 +15,7 @@ import { amountInWords } from '@/lib/amount-in-words';
 import StatusBadge from '@/components/shared/StatusBadge';
 import PaymentDialog from '@/components/invoices/PaymentDialog';
 import PrintInvoice from '@/components/invoices/PrintInvoice';
+import { nepalTodayISO } from '@/lib/nepal-date';
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -89,7 +90,7 @@ export default function InvoiceDetailPage() {
           vendor_id: null,
           buyer_pan: invoice.buyer_pan,
           is_vat_invoice: invoice.is_vat_invoice,
-          issued_date_ad: new Date().toISOString().slice(0, 10),
+          issued_date_ad: nepalTodayISO(),
           issued_date_bs: invoice.issued_date_bs,
           due_date_ad: invoice.due_date_ad,
           due_date_bs: invoice.due_date_bs,
