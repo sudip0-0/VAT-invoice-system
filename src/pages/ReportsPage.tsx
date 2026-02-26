@@ -14,6 +14,10 @@ import {
 } from '@/hooks/useReportsExtra';
 import { formatNPR } from '@/lib/nepal-format';
 import { nepalNow, formatLocalDate } from '@/lib/nepal-date';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
+  ResponsiveContainer, Legend, Cell,
+} from 'recharts';
 
 function getDefaultDateRange() {
   const now = nepalNow();
@@ -314,20 +318,50 @@ function PnLReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
     { label: 'Net Profit', value: data.netProfit, bold: true, highlight: true },
   ];
 
+  const chartData = [
+    { name: 'Sales', value: data.totalSales },
+    { name: 'COGS', value: data.totalCOGS },
+    { name: 'Gross Profit', value: Math.max(0, data.grossProfit) },
+    { name: 'Net Profit', value: Math.max(0, data.netProfit) },
+  ];
+
+  const barColors = ['hsl(var(--primary))', 'hsl(var(--destructive))', 'hsl(142, 71%, 45%)', 'hsl(142, 71%, 35%)'];
+
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden max-w-lg">
-      <table className="w-full text-sm">
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className={`border-b border-border last:border-0 ${r.highlight ? 'bg-muted/30' : ''}`}>
-              <td className={`px-4 py-3 ${r.bold ? 'font-semibold' : ''} ${r.info ? 'text-muted-foreground pl-8' : 'text-foreground'}`}>{r.label}</td>
-              <td className={`px-4 py-3 text-right ${r.bold ? 'font-semibold' : ''} ${r.value < 0 ? 'text-destructive' : 'text-foreground'}`}>
-                {formatNPR(Math.abs(r.value))}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-4">
+      {/* Chart */}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <h3 className="text-sm font-semibold text-foreground mb-3">P&L Overview</h3>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={chartData} barSize={40}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+            <RechartsTooltip formatter={(value: number) => formatNPR(value)} contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 12 }} />
+            <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+              {chartData.map((_, i) => (
+                <Cell key={i} fill={barColors[i]} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Table */}
+      <div className="rounded-lg border border-border bg-card overflow-hidden max-w-lg">
+        <table className="w-full text-sm">
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className={`border-b border-border last:border-0 ${r.highlight ? 'bg-muted/30' : ''}`}>
+                <td className={`px-4 py-3 ${r.bold ? 'font-semibold' : ''} ${r.info ? 'text-muted-foreground pl-8' : 'text-foreground'}`}>{r.label}</td>
+                <td className={`px-4 py-3 text-right ${r.bold ? 'font-semibold' : ''} ${r.value < 0 ? 'text-destructive' : 'text-foreground'}`}>
+                  {formatNPR(Math.abs(r.value))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -841,7 +875,25 @@ function DailySummaryReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: st
   const handleExport = () => { if (!data?.rows.length) return; exportCSV(['Date (BS)', 'Date (AD)', 'Sales', 'Purchases', 'Payments In', 'Payments Out', 'Invoices', 'Payments'], data.rows.map(r => [r.date_bs, r.date_ad, String(r.total_sales), String(r.total_purchases), String(r.total_payments_in), String(r.total_payments_out), String(r.invoice_count), String(r.payment_count)]), `daily-summary-${dateFrom}-${dateTo}.csv`); };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      {/* Chart */}
+      {data && data.rows.length > 0 && (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Daily Sales vs Purchases</h3>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={data.rows} barGap={2}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey="date_bs" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} angle={-35} textAnchor="end" height={50} />
+              <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+              <RechartsTooltip formatter={(value: number) => formatNPR(value)} contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="total_sales" name="Sales" fill="hsl(142, 71%, 45%)" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="total_purchases" name="Purchases" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
       <div className="flex justify-end"><ExportButton onClick={handleExport} disabled={!data?.rows.length} /></div>
       <ReportTable loading={isLoading} empty={!data?.rows.length}>
         <thead><tr className="border-b border-border bg-muted/50">
