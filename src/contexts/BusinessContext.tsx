@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -27,13 +27,13 @@ interface BusinessContextType {
 const BusinessContext = createContext<BusinessContextType | undefined>(undefined);
 
 export function BusinessProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [business, setBusiness] = useState<Business | null>(null);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchBusinesses = async () => {
+  const fetchBusinesses = useCallback(async () => {
     if (!user) {
       setBusiness(null);
       setBusinesses([]);
@@ -86,11 +86,15 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     }
 
     setLoading(false);
-  };
+  }, [user]);
 
   useEffect(() => {
+    if (authLoading) {
+      setLoading(true);
+      return;
+    }
     fetchBusinesses();
-  }, [user]);
+  }, [user, authLoading, fetchBusinesses]);
 
   const switchBusiness = async (id: string) => {
     const biz = businesses.find((b) => b.id === id);
