@@ -225,19 +225,19 @@ const PrintInvoice = forwardRef<HTMLDivElement, PrintInvoiceProps>(
         )}
 
         {/* Signature Section */}
-        <div className="grid grid-cols-3 gap-4 mt-10 pt-4 text-xs text-center">
+        <div className="grid grid-cols-3 gap-3 mt-6 pt-2 text-xs text-center">
           <div>
-            <div className="border-t border-gray-400 pt-1 mt-10">
+            <div className="border-t border-gray-400 pt-1 mt-6">
               <p className="font-semibold">Prepared By</p>
             </div>
           </div>
           <div>
-            <div className="border-t border-gray-400 pt-1 mt-10">
+            <div className="border-t border-gray-400 pt-1 mt-6">
               <p className="font-semibold">Received By</p>
             </div>
           </div>
           <div>
-            <div className="border-t border-gray-400 pt-1 mt-10">
+            <div className="border-t border-gray-400 pt-1 mt-6">
               <p className="font-semibold">Authorized Signatory</p>
             </div>
           </div>

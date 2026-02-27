@@ -119,7 +119,7 @@
   position: absolute;
   left: -9999px;
   top: 0;
-  width: 210mm;
+  width: 148mm;
   visibility: hidden;
 }
 
@@ -127,7 +127,7 @@
   position: absolute;
   left: -9999px;
   top: 0;
-  width: 210mm;
+  width: 148mm;
   visibility: hidden;
 }
 
@@ -159,8 +159,8 @@
   .print-invoice {
     width: 100% !important;
     max-width: 100% !important;
-    padding: 10mm !important;
-    font-size: 11px !important;
+    padding: 5mm !important;
+    font-size: 9px !important;
     color: black !important;
     background: white !important;
   }
@@ -175,7 +175,7 @@
   }
 
   @page {
-    size: A4;
-    margin: 10mm;
+    size: A5;
+    margin: 6mm;
   }
 }
