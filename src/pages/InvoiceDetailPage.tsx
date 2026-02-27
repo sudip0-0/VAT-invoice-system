@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Printer, CreditCard, Pencil, Ban, FileOutput } from 'lucide-react';
+import { ArrowLeft, Printer, CreditCard, Pencil, Ban, FileOutput, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -79,6 +79,32 @@ export default function InvoiceDetailPage() {
   const isQuotation = invoice.type === 'quotation';
   const backPath = isQuotation ? '/quotations' : '/invoices';
 
+  const handleWhatsAppShare = () => {
+    const partyName = (party as any)?.name || 'Customer';
+    const typeName = invoice.type === 'quotation' ? 'Quotation' : invoice.type === 'sale' ? 'Invoice' : 'Purchase Bill';
+    const lines = [
+      `*${typeName}: ${invoice.invoice_number}*`,
+      `From: ${business?.name || ''}`,
+      `To: ${partyName}`,
+      `Date (BS): ${invoice.issued_date_bs}`,
+      '',
+      `*Total: ${formatNPR(invoice.total_amount)}*`,
+    ];
+    if (invoice.balance_due > 0) {
+      lines.push(`Balance Due: ${formatNPR(invoice.balance_due)}`);
+    }
+    if (invoice.due_date_bs) {
+      lines.push(`Due Date: ${invoice.due_date_bs}`);
+    }
+    lines.push('', `View: ${window.location.href}`);
+    const text = encodeURIComponent(lines.join('\n'));
+    const partyPhone = (party as any)?.phone?.replace(/[^0-9]/g, '') || '';
+    const url = partyPhone
+      ? `https://wa.me/${partyPhone.startsWith('977') ? partyPhone : '977' + partyPhone}?text=${text}`
+      : `https://wa.me/?text=${text}`;
+    window.open(url, '_blank');
+  };
+
   const handleConvertToInvoice = async () => {
     try {
       const newId = await createInvoice.mutateAsync({
@@ -155,6 +181,9 @@ export default function InvoiceDetailPage() {
               <Ban className="h-3.5 w-3.5" /> Cancel
             </Button>
           )}
+          <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={handleWhatsAppShare}>
+            <Share2 className="h-3.5 w-3.5" /> WhatsApp
+          </Button>
           <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={handlePrint}>
             <Printer className="h-3.5 w-3.5" /> Print / PDF
           </Button>
