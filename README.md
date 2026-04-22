@@ -1,73 +1,163 @@
-# Welcome to your Lovable project
+# VAT Invoice System
 
-## Project info
+Nepal-focused billing, VAT invoicing, inventory, and reporting app for small businesses. The app supports sales invoices, purchase bills, quotations, payments, party ledgers, stock tracking, printable invoices, and compliance-oriented reports.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Highlights
 
-## How can I edit this code?
+- Email/password authentication with Supabase
+- Multi-business support with role-based access
+- Business onboarding with default tax-rate setup
+- Sales invoices, purchase bills, and quotations from a shared invoice engine
+- VAT-aware line items, BS/AD dates, Nepal timezone handling, and NPR formatting
+- Inventory, manual stock adjustments, and automatic stock movement on invoice issue/cancel
+- Party balances and ledger views
+- Payment in/out flows for both invoice-linked and standalone payments
+- Dashboard and CSV-exportable reports
+- Print/PDF invoice output and WhatsApp sharing
 
-There are several ways of editing your application.
+## Tech Stack
 
-**Use Lovable**
+- React 18
+- TypeScript
+- Vite
+- React Router
+- TanStack Query
+- Tailwind CSS
+- shadcn/ui and Radix UI
+- Supabase Auth + Postgres + Row Level Security
+- Vitest + Testing Library
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## Getting Started
 
-Changes made via Lovable will be committed automatically to this repo.
+### Prerequisites
 
-**Use your preferred IDE**
+- Node.js 18+ and npm
+- A Supabase project with the migrations from `supabase/migrations`
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### Environment variables
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+Create a `.env` file with the following variables:
 
-Follow these steps:
+```env
+VITE_SUPABASE_PROJECT_ID=your-project-id
+VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key
+VITE_SUPABASE_URL=https://your-project.supabase.co
+```
+
+### Install and run
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+npm install
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Useful scripts:
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```sh
+npm run build
+npm run build:dev
+npm run lint
+npm run test
+npm run preview
+```
 
-**Use GitHub Codespaces**
+## Main Workflow
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+1. Sign up or sign in.
+2. Create a business from `/setup-business`.
+3. Add parties and inventory items.
+4. Create sales invoices, purchase bills, or quotations.
+5. Record payments and monitor balances.
+6. Use the dashboard and reports for VAT, stock, cash flow, and party analysis.
 
-## What technologies are used for this project?
+## Project Structure
 
-This project is built with:
+- `src/App.tsx` - route tree and app providers
+- `src/contexts/` - auth and active business state
+- `src/pages/` - main screens
+- `src/hooks/` - Supabase-backed data and reporting hooks
+- `src/components/` - layouts, dialogs, invoice print view, and shared UI
+- `src/lib/` - Nepal date, BS calendar, NPR formatting, and amount-in-words utilities
+- `src/integrations/supabase/` - typed Supabase client
+- `supabase/migrations/` - schema, RLS policies, and stock triggers
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## Core Modules
 
-## How can I deploy this project?
+### Authentication and business scoping
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+- Supabase Auth handles email/password login.
+- Each user can belong to one or more businesses through `business_users`.
+- The active business is stored on `profiles.active_business_id`.
 
-## Can I connect a custom domain to my Lovable project?
+### Sales, purchases, and quotations
 
-Yes, you can!
+- Sales invoices, purchase bills, and quotations are all stored in `invoices`.
+- The create, edit, and detail screens share the same data model and hook layer.
+- Quotations can be converted into invoices from the detail view.
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+### Inventory and stock
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+- `items` stores products and services.
+- Manual stock adjustments create `stock_movements`.
+- Database triggers also update stock automatically when an invoice is issued or cancelled.
+
+### Parties and payments
+
+- `parties` represents customers, vendors, or both.
+- Payments can be linked to invoices or recorded as standalone transactions.
+- Party ledger and balance views are derived from invoices and payments.
+
+### Reporting
+
+Reports are grouped into:
+
+- Sales and Purchase
+- Profit and Analysis
+- Financial
+- Party and Outstanding
+- Tax and Compliance
+- Inventory
+
+Most reports can be filtered by date and exported as CSV.
+
+## Database Overview
+
+Main tables:
+
+- `profiles`
+- `businesses`
+- `business_users`
+- `tax_rates`
+- `item_categories`
+- `items`
+- `parties`
+- `invoices`
+- `invoice_items`
+- `payments`
+- `stock_movements`
+
+Important behavior:
+
+- Row Level Security limits access by business membership.
+- Profiles are auto-created on signup.
+- Invoice issue/cancel transitions change stock in the database.
+- The frontend inserts invoices as `draft` first, then updates status after line items are saved so stock triggers run with complete data.
+
+## Nepal-Specific Behavior
+
+- Bikram Sambat date conversion and BS date picker
+- Nepal timezone helpers
+- South Asian number formatting for NPR
+- Fiscal-year and VAT-period helpers
+- Amount-in-words for printable invoices
+
+## Known Gaps
+
+- The automated test suite is currently minimal and contains only a placeholder example.
+- The repo includes Supabase migrations, but no full local seed/demo-data workflow.
+- Many reports are computed in the frontend from operational data instead of a dedicated reporting backend.
+
+## Development Notes
+
+- The original README was a Lovable template; this file documents the actual project.
+- The UI is built around a Nepal small-business billing flow rather than a generic invoicing demo.
