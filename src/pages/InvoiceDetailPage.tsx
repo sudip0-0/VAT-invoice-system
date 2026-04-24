@@ -1,8 +1,13 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Printer, CreditCard, Pencil, Ban, FileOutput, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -16,6 +21,7 @@ import StatusBadge from '@/components/shared/StatusBadge';
 import PaymentDialog from '@/components/invoices/PaymentDialog';
 import PrintInvoice from '@/components/invoices/PrintInvoice';
 import { nepalTodayISO } from '@/lib/nepal-date';
+import { formatBSShort, todayBS } from '@/lib/bs-calendar';
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -27,11 +33,17 @@ export default function InvoiceDetailPage() {
   const { cancelInvoice, createInvoice } = useInvoices();
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
-  const printRef = useRef<HTMLDivElement>(null);
+  const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
+  const [printSize, setPrintSize] = useState<"a4" | "a5">("a5");
   const [showPrint, setShowPrint] = useState(false);
 
   const handlePrint = () => {
     setShowPrint(true);
+    setPrintOptionsOpen(false);
+    const printStyle = document.createElement('style');
+    printStyle.id = 'invoice-print-page-size';
+    printStyle.textContent = `@media print { @page { size: ${printSize.toUpperCase()}; margin: ${printSize === 'a4' ? '8mm' : '6mm'}; } }`;
+    document.head.appendChild(printStyle);
     // Wait for the print template to render, then trigger print
     requestAnimationFrame(() => {
       setTimeout(() => {
@@ -39,11 +51,15 @@ export default function InvoiceDetailPage() {
         // Keep template visible briefly after print dialog closes
         const onAfterPrint = () => {
           setShowPrint(false);
+          printStyle.remove();
           window.removeEventListener('afterprint', onAfterPrint);
         };
         window.addEventListener('afterprint', onAfterPrint);
         // Fallback: hide after 60s if afterprint never fires
-        setTimeout(() => setShowPrint(false), 60000);
+        setTimeout(() => {
+          setShowPrint(false);
+          printStyle.remove();
+        }, 60000);
       }, 200);
     });
   };
@@ -107,6 +123,8 @@ export default function InvoiceDetailPage() {
 
   const handleConvertToInvoice = async () => {
     try {
+      const todayAd = nepalTodayISO();
+      const todayBs = formatBSShort(todayBS());
       const newId = await createInvoice.mutateAsync({
         invoice: {
           invoice_number: `${business?.invoice_prefix || 'INV'}-${String(business?.next_invoice_num || 1).padStart(4, '0')}`,
@@ -116,8 +134,8 @@ export default function InvoiceDetailPage() {
           vendor_id: null,
           buyer_pan: invoice.buyer_pan,
           is_vat_invoice: invoice.is_vat_invoice,
-          issued_date_ad: nepalTodayISO(),
-          issued_date_bs: invoice.issued_date_bs,
+          issued_date_ad: todayAd,
+          issued_date_bs: todayBs,
           due_date_ad: invoice.due_date_ad,
           due_date_bs: invoice.due_date_bs,
           vat_period: invoice.vat_period,
@@ -128,7 +146,7 @@ export default function InvoiceDetailPage() {
           total_amount: invoice.total_amount,
           balance_due: invoice.total_amount,
           notes: invoice.notes,
-          reference_number: invoice.invoice_number,
+          reference_number: invoice.reference_number || invoice.invoice_number,
         },
         items: lineItems.map((l) => ({
           item_id: l.item_id,
@@ -184,14 +202,14 @@ export default function InvoiceDetailPage() {
           <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={handleWhatsAppShare}>
             <Share2 className="h-3.5 w-3.5" /> WhatsApp
           </Button>
-          <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={handlePrint}>
+          <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => setPrintOptionsOpen(true)}>
             <Printer className="h-3.5 w-3.5" /> Print / PDF
           </Button>
         </div>
       </div>
 
       {/* Printable Invoice */}
-      <div ref={printRef} className="rounded-lg border border-border bg-card p-6 print:border-0 print:shadow-none print:p-0">
+      <div className="rounded-lg border border-border bg-card p-6 print:border-0 print:shadow-none print:p-0">
         {/* Business + Party header */}
         <div className="flex justify-between mb-6">
           <div>
@@ -376,6 +394,51 @@ export default function InvoiceDetailPage() {
         loading={recordPayment.isPending}
       />
 
+      <Dialog open={printOptionsOpen} onOpenChange={setPrintOptionsOpen}>
+        <DialogContent className="max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Print Invoice</DialogTitle>
+            <DialogDescription>
+              Choose a paper size and preview the invoice before printing.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 lg:grid-cols-[220px_1fr]">
+            <RadioGroup value={printSize} onValueChange={(value) => setPrintSize(value as "a4" | "a5")} className="grid gap-2">
+              <Label className="flex cursor-pointer items-center gap-3 rounded-md border border-border p-3">
+                <RadioGroupItem value="a4" />
+                <span>
+                  <span className="block text-sm font-semibold">A4</span>
+                  <span className="block text-xs text-muted-foreground">210 x 297 mm</span>
+                </span>
+              </Label>
+              <Label className="flex cursor-pointer items-center gap-3 rounded-md border border-border p-3">
+                <RadioGroupItem value="a5" />
+                <span>
+                  <span className="block text-sm font-semibold">A5</span>
+                  <span className="block text-xs text-muted-foreground">148 x 210 mm</span>
+                </span>
+              </Label>
+            </RadioGroup>
+
+            <div className="max-h-[65vh] overflow-auto rounded-md border border-border bg-muted/30 p-4">
+              <div className={`print-preview-scale print-preview-scale-${printSize}`}>
+                <PrintInvoice invoice={invoice} business={business!} pageSize={printSize} />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPrintOptionsOpen(false)}>
+              Cancel
+            </Button>
+            <Button className="gap-1.5" onClick={handlePrint}>
+              <Printer className="h-4 w-4" /> Print / PDF
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Cancel Confirmation */}
       <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
         <AlertDialogContent>
@@ -396,8 +459,8 @@ export default function InvoiceDetailPage() {
 
       {/* Print Template — portaled to body so print CSS can target it */}
       {createPortal(
-        <div className={showPrint ? 'print-template-active' : 'print-template-hidden'}>
-          <PrintInvoice ref={printRef} invoice={invoice} business={business!} />
+        <div className={`${showPrint ? 'print-template-active' : 'print-template-hidden'} print-template-${printSize}`}>
+          <PrintInvoice invoice={invoice} business={business!} pageSize={printSize} />
         </div>,
         document.body
       )}

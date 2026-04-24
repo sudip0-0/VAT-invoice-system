@@ -1,7 +1,8 @@
-import { forwardRef } from 'react';
-import { formatNPR } from '@/lib/nepal-format';
-import { amountInWords } from '@/lib/amount-in-words';
-import type { InvoiceDetail } from '@/hooks/useInvoices';
+//Printinvoice.tsx
+import { forwardRef } from "react";
+import { formatNPR } from "@/lib/nepal-format";
+import { amountInWords } from "@/lib/amount-in-words";
+import type { InvoiceDetail } from "@/hooks/useInvoices";
 
 interface PrintInvoiceProps {
   invoice: InvoiceDetail;
@@ -14,245 +15,255 @@ interface PrintInvoiceProps {
     pan_number?: string | null;
     is_vat_registered?: boolean;
   };
+  pageSize?: "a4" | "a5";
 }
 
 const PrintInvoice = forwardRef<HTMLDivElement, PrintInvoiceProps>(
-  ({ invoice, business }, ref) => {
+  ({ invoice, business, pageSize = "a5" }, ref) => {
     const party = invoice.customer || invoice.vendor;
     const lineItems = (invoice.invoice_items || []).sort((a, b) => a.sort_order - b.sort_order);
-    const isCancelled = invoice.status === 'cancelled';
-    const hasDiscount = lineItems.some((l) => l.discount_amt > 0);
-    const isSale = invoice.type === 'sale';
+    const isCancelled = invoice.status === "cancelled";
+    const isSale = invoice.type === "sale";
+
+    const adIssueDate = new Date(invoice.issued_date_ad);
+    const adIssueDateDisplay = adIssueDate.toLocaleDateString("en-GB");
+    const printedDateTime = new Date().toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    });
+
+    const partyName = party?.name || "-";
+    const partyAddress = `${party?.address || "-"}${party?.city ? `, ${party.city}` : ""}`;
+    const partyPan = party?.pan_number || invoice.buyer_pan || "-";
+    const remarkText = invoice.notes || (isSale ? "SALES" : "PURCHASE");
+    const taxableAmount = invoice.is_vat_invoice ? invoice.taxable_amount : invoice.sub_total;
+    const vatAmount = invoice.is_vat_invoice ? invoice.vat_amount : 0;
+    const taxExempted = invoice.is_vat_invoice ? 0 : invoice.sub_total;
 
     return (
-      <div ref={ref} className="print-invoice font-sans text-black bg-white p-8 max-w-[210mm] mx-auto">
-        {/* Watermark for cancelled */}
+      <div ref={ref} className={`print-invoice print-invoice-${pageSize} relative bg-white text-black mx-auto`}>
         {isCancelled && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-            <span className="text-7xl font-bold text-red-300 opacity-30 rotate-[-30deg] select-none">
+          <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+            <span className="rotate-[-30deg] select-none text-7xl font-bold text-red-300 opacity-30">
               CANCELLED
             </span>
           </div>
         )}
 
-        {/* Header: Tax Invoice title */}
-        <div className="text-center border-b-2 border-black pb-3 mb-4">
-          <h1 className="text-lg font-bold tracking-wide uppercase">
-            {invoice.is_vat_invoice ? 'TAX INVOICE' : isSale ? 'INVOICE' : 'PURCHASE BILL'}
-          </h1>
-          {invoice.is_vat_invoice && (
-            <p className="text-[10px] text-gray-600 mt-0.5">
-              (As per Rule 23(1)(kha) of Value Added Tax Rules, 2053)
+        <div className="invoice-paper border border-black leading-tight">
+          {/* Header */}
+          <div className="invoice-header border-b border-black px-4 py-3 text-center">
+            <h1 className="invoice-business-name font-semibold uppercase">{business.name}</h1>
+            <p className="mt-1">
+              {business.address || ""}
+              {business.city ? `, ${business.city}` : ""}
             </p>
-          )}
-        </div>
-
-        {/* Seller / Business Info */}
-        <div className="flex justify-between mb-4">
-          <div className="space-y-0.5">
-            <h2 className="text-base font-bold">{business.name}</h2>
-            <p className="text-xs text-gray-700">
-              {business.address}{business.city ? `, ${business.city}` : ''}
+            <p className="mt-1">Tel : {business.phone || "-"}</p>
+            <p className="mt-1">
+              {business.is_vat_registered ? "VAT NO" : "PAN NO"} : {business.pan_number || "-"}
             </p>
-            {business.phone && <p className="text-xs text-gray-700">Phone: {business.phone}</p>}
-            {business.email && <p className="text-xs text-gray-700">Email: {business.email}</p>}
-            {business.pan_number && (
-              <p className="text-xs font-semibold">
-                {business.is_vat_registered ? 'VAT PAN' : 'PAN'}: {business.pan_number}
-              </p>
-            )}
           </div>
-          <div className="text-right space-y-0.5">
-            <p className="text-xs">
-              <span className="font-semibold">Invoice No:</span>{' '}
-              <span className="font-mono font-bold">{invoice.invoice_number}</span>
-            </p>
-            <p className="text-xs">
-              <span className="font-semibold">Date (BS):</span> {invoice.issued_date_bs}
-            </p>
-            <p className="text-xs">
-              <span className="font-semibold">Date (AD):</span>{' '}
-              {new Date(invoice.issued_date_ad).toLocaleDateString('en-GB')}
-            </p>
-            {invoice.due_date_bs && (
-              <p className="text-xs">
-                <span className="font-semibold">Due Date:</span> {invoice.due_date_bs}
-              </p>
-            )}
-            {invoice.vat_period && (
-              <p className="text-xs">
-                <span className="font-semibold">VAT Period:</span> {invoice.vat_period}
-              </p>
-            )}
-          </div>
-        </div>
 
-        {/* Buyer Info */}
-        <div className="border border-gray-400 rounded p-3 mb-4">
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            <div>
-              <span className="font-semibold">{isSale ? "Buyer's Name" : "Seller's Name"}:</span>{' '}
-              {(party as any)?.name || '—'}
+          {/* Title */}
+          <div className="invoice-title border-b border-black py-2 text-center">
+            <h2 className="font-semibold uppercase">
+              {invoice.is_vat_invoice ? "Tax Invoice" : isSale ? "Invoice" : "Purchase Bill"}
+            </h2>
+          </div>
+
+          {/* Customer & Bill Info */}
+          <div className="invoice-info-grid border-b border-black p-3">
+            <div className="invoice-detail-box border border-black px-3 py-2">
+              <p className="mb-2 text-[16px] italic">Customer Details</p>
+              <p className="text-[18px] font-semibold uppercase">{partyName}</p>
+              <p className="mt-2 uppercase">{partyAddress}</p>
+              <p className="mt-2 font-medium">PAN/VAT NO : {partyPan}</p>
             </div>
-            <div>
-              <span className="font-semibold">PAN No:</span>{' '}
-              {(party as any)?.pan_number || invoice.buyer_pan || '—'}
-            </div>
-            <div>
-              <span className="font-semibold">Address:</span>{' '}
-              {(party as any)?.address || '—'}
-              {(party as any)?.city ? `, ${(party as any).city}` : ''}
-            </div>
-            <div>
-              <span className="font-semibold">Phone:</span>{' '}
-              {(party as any)?.phone || '—'}
+
+            <div className="invoice-detail-box border border-black px-3 py-2">
+              <p className="mb-2 text-[16px] italic">Bill Details</p>
+              <div className="invoice-bill-grid">
+                <span>Bill No</span>
+                <span>:</span>
+                <span className="font-semibold">{invoice.invoice_number}</span>
+
+                <span>Bill Miti</span>
+                <span>:</span>
+                <span>{invoice.issued_date_bs || "-"}</span>
+
+                <span>Date</span>
+                <span>:</span>
+                <span>{adIssueDateDisplay}</span>
+
+                <span>Bill Type</span>
+                <span>:</span>
+                <span className="capitalize">{invoice.balance_due > 0 ? "Credit" : "Cash"}</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Line Items Table */}
-        <table className="w-full text-xs border-collapse mb-4">
-          <thead>
-            <tr className="bg-gray-100">
-              <th className="border border-gray-400 px-2 py-1.5 text-left w-8">S.N.</th>
-              <th className="border border-gray-400 px-2 py-1.5 text-left">Particulars</th>
-              <th className="border border-gray-400 px-2 py-1.5 text-right w-12">Qty</th>
-              <th className="border border-gray-400 px-2 py-1.5 text-left w-12">Unit</th>
-              <th className="border border-gray-400 px-2 py-1.5 text-right w-20">Rate</th>
-              {hasDiscount && (
-                <th className="border border-gray-400 px-2 py-1.5 text-right w-16">Discount</th>
-              )}
-              <th className="border border-gray-400 px-2 py-1.5 text-right w-24">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lineItems.map((item, idx) => (
-              <tr key={item.id}>
-                <td className="border border-gray-400 px-2 py-1 text-center">{idx + 1}</td>
-                <td className="border border-gray-400 px-2 py-1 font-medium">
-                  {item.name}
-                  {item.description && (
-                    <span className="block text-[10px] text-gray-500">{item.description}</span>
-                  )}
+          {/* Main Table — line items + summary merged */}
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className="w-[6%] border-b border-r border-black px-1 py-1 text-left">S.N.</th>
+                <th className="w-[10%] border-b border-r border-black px-1 py-1 text-left">HSCode</th>
+                <th className="w-[39%] border-b border-r border-black px-1 py-1 text-left">Description</th>
+                <th className="w-[11%] border-b border-r border-black px-1 py-1 text-right">Qty</th>
+                <th className="w-[8%] border-b border-r border-black px-1 py-1 text-center">Unit</th>
+                <th className="w-[13%] border-b border-r border-black px-1 py-1 text-right">Rate</th>
+                <th className="w-[13%] border-b border-black px-1 py-1 text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* Line items */}
+              {lineItems.map((item, idx) => {
+                const amount = item.taxable_amount || (item.quantity * item.rate - item.discount_amt);
+                return (
+                  <tr key={item.id} className="invoice-item-row align-top">
+                    <td className="border-r border-black px-1 py-1 text-center">{idx + 1}</td>
+                    <td className="border-r border-black px-1 py-1 text-left">-</td>
+                    <td className="border-r border-black px-1 py-1">
+                      <div>
+                        <span className="font-medium">{item.name}</span>
+                      </div>
+                    </td>
+                    <td className="border-r border-black px-1 py-1 text-right">
+                      {Number(item.quantity).toFixed(2)}
+                    </td>
+                    <td className="border-r border-black px-1 py-1 text-center">{item.unit}</td>
+                    <td className="border-r border-black px-1 py-1 text-right">
+                      {formatNPR(item.rate, { showSymbol: false })}
+                    </td>
+                    <td className="px-1 py-1 text-right">{formatNPR(amount, { showSymbol: false })}</td>
+                  </tr>
+                );
+              })}
+
+              {/* Filler row */}
+              <tr className="invoice-item-filler" aria-hidden="true">
+                <td className="border-r border-black">&nbsp;</td>
+                <td className="border-r border-black">&nbsp;</td>
+                <td className="border-r border-black">&nbsp;</td>
+                <td className="border-r border-black">&nbsp;</td>
+                <td className="border-r border-black">&nbsp;</td>
+                <td className="border-r border-black">&nbsp;</td>
+                <td>&nbsp;</td>
+              </tr>
+
+              {/* ── Summary rows merged into the same table ── */}
+
+              {/* Row 1: Remarks (rowSpan=6) + Basic Total */}
+              <tr className="border-t border-black">
+                <td
+                  colSpan={3}
+                  rowSpan={6}
+                  className="border-t border-r border-black px-2 py-1 align-top"
+                >
+                  <div className="border-b border-black pb-1 mb-1">
+                    <span className="font-semibold">Remarks:</span> {remarkText}
+                  </div>
+                  <div className="invoice-words-box border-b border-black pb-2 mb-1 flex items-end">
+                    <p className="text-[11px]">
+                      <span className="font-semibold">In Words: </span>
+                      {amountInWords(invoice.total_amount)}
+                    </p>
+                  </div>
+                  <div>
+                    <p>*Goods once sold will not be taken back</p>
+                    <p>*E&OE</p>
+                  </div>
                 </td>
-                <td className="border border-gray-400 px-2 py-1 text-right">{item.quantity}</td>
-                <td className="border border-gray-400 px-2 py-1">{item.unit}</td>
-                <td className="border border-gray-400 px-2 py-1 text-right">
-                  {formatNPR(item.rate, { showSymbol: false })}
+                <td colSpan={2} className="border-t border-r border-black px-2 py-1">
+                  Basic Total
                 </td>
-                {hasDiscount && (
-                  <td className="border border-gray-400 px-2 py-1 text-right">
-                    {item.discount_amt > 0 ? formatNPR(item.discount_amt, { showSymbol: false }) : '—'}
-                  </td>
-                )}
-                <td className="border border-gray-400 px-2 py-1 text-right font-medium">
-                  {formatNPR(item.taxable_amount || (item.quantity * item.rate - item.discount_amt), { showSymbol: false })}
+                <td colSpan={2} className="border-t border-black px-2 py-1 text-right font-semibold">
+                  {formatNPR(invoice.sub_total, { showSymbol: false })}
                 </td>
               </tr>
-            ))}
-            {/* Empty rows for IRD compliance (minimum visual rows) */}
-            {lineItems.length < 3 &&
-              Array.from({ length: 3 - lineItems.length }).map((_, i) => (
-                <tr key={`empty-${i}`}>
-                  <td className="border border-gray-400 px-2 py-1 text-center text-gray-300">&nbsp;</td>
-                  <td className="border border-gray-400 px-2 py-1">&nbsp;</td>
-                  <td className="border border-gray-400 px-2 py-1">&nbsp;</td>
-                  <td className="border border-gray-400 px-2 py-1">&nbsp;</td>
-                  <td className="border border-gray-400 px-2 py-1">&nbsp;</td>
-                  {hasDiscount && <td className="border border-gray-400 px-2 py-1">&nbsp;</td>}
-                  <td className="border border-gray-400 px-2 py-1">&nbsp;</td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
 
-        {/* Totals Section */}
-        <div className="flex justify-end mb-4">
-          <div className="w-72 text-xs">
-            <div className="flex justify-between py-1 border-b border-gray-300">
-              <span>Sub Total</span>
-              <span className="font-medium">{formatNPR(invoice.sub_total, { showSymbol: false })}</span>
+              {/* Row 2: Discount */}
+              <tr>
+                <td colSpan={2} className="border-t border-r border-black px-2 py-1">
+                  Discount
+                </td>
+                <td colSpan={2} className="border-t border-black px-2 py-1 text-right">
+                  {formatNPR(invoice.discount_amount, { showSymbol: false })}
+                </td>
+              </tr>
+
+              {/* Row 3: Tax Exempted */}
+              <tr>
+                <td colSpan={2} className="border-t border-r border-black px-2 py-1">
+                  Tax Exempted
+                </td>
+                <td colSpan={2} className="border-t border-black px-2 py-1 text-right">
+                  {formatNPR(taxExempted, { showSymbol: false })}
+                </td>
+              </tr>
+
+              {/* Row 4: Taxable Amount */}
+              <tr>
+                <td colSpan={2} className="border-t border-r border-black px-2 py-1">
+                  Taxable Amount
+                </td>
+                <td colSpan={2} className="border-t border-black px-2 py-1 text-right">
+                  {formatNPR(taxableAmount, { showSymbol: false })}
+                </td>
+              </tr>
+
+              {/* Row 5: VAT */}
+              <tr>
+                <td colSpan={2} className="border-t border-r border-black px-2 py-1">
+                  Vat 13%
+                </td>
+                <td colSpan={2} className="border-t border-black px-2 py-1 text-right ">
+                  {formatNPR(invoice.is_vat_invoice ? vatAmount : 0, { showSymbol: false })}
+                </td>
+              </tr>
+
+              {/* Row 6: Grand Total */}
+              <tr>
+                <td
+                  colSpan={2}
+                  className="border-t border-b border-r border-black px-2 py-1"
+                >
+                  Grand Total
+                </td>
+                <td
+                  colSpan={2}
+                  className="border-t border-b border-black px-2 py-1 text-right font-semibold"
+                >
+                  {formatNPR(invoice.total_amount, { showSymbol: false })}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          {/* Signature row */}
+          <div className="grid grid-cols-3 px-3 py-4 text-center">
+            <div>
+              <div className="invoice-signature-line">Prepared By</div>
             </div>
-            {invoice.discount_amount > 0 && (
-              <div className="flex justify-between py-1 border-b border-gray-300">
-                <span>Discount</span>
-                <span>({formatNPR(invoice.discount_amount, { showSymbol: false })})</span>
-              </div>
-            )}
-            {invoice.is_vat_invoice && (
-              <>
-                <div className="flex justify-between py-1 border-b border-gray-300">
-                  <span>Taxable Amount</span>
-                  <span className="font-medium">{formatNPR(invoice.taxable_amount, { showSymbol: false })}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-gray-300">
-                  <span>VAT (13%)</span>
-                  <span className="font-medium">{formatNPR(invoice.vat_amount, { showSymbol: false })}</span>
-                </div>
-              </>
-            )}
-            <div className="flex justify-between py-1.5 border-b-2 border-black font-bold text-sm">
-              <span>Total Amount</span>
-              <span>{formatNPR(invoice.total_amount)}</span>
+            <div>
+              <div className="invoice-signature-line">Customer Sign & Stamp</div>
             </div>
-          </div>
-        </div>
-
-        {/* Amount in Words */}
-        <div className="border border-gray-400 rounded p-2 mb-4">
-          <p className="text-[10px] uppercase font-semibold text-gray-500 mb-0.5">Amount in Words</p>
-          <p className="text-xs font-medium italic">
-            Nepali Rupees {amountInWords(invoice.total_amount)}
-          </p>
-        </div>
-
-        {/* Notes & Terms */}
-        {(invoice.notes || invoice.terms_conditions) && (
-          <div className="mb-4 text-xs space-y-1">
-            {invoice.notes && (
-              <div>
-                <span className="font-semibold">Notes: </span>
-                <span className="text-gray-700">{invoice.notes}</span>
-              </div>
-            )}
-            {invoice.terms_conditions && (
-              <div>
-                <span className="font-semibold">Terms & Conditions: </span>
-                <span className="text-gray-700">{invoice.terms_conditions}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Signature Section */}
-        <div className="grid grid-cols-3 gap-3 mt-6 pt-2 text-xs text-center">
-          <div>
-            <div className="border-t border-gray-400 pt-1 mt-6">
-              <p className="font-semibold">Prepared By</p>
+            <div>
+              <div className="invoice-signature-line">For: {business.name}</div>
             </div>
           </div>
-          <div>
-            <div className="border-t border-gray-400 pt-1 mt-6">
-              <p className="font-semibold">Received By</p>
-            </div>
-          </div>
-          <div>
-            <div className="border-t border-gray-400 pt-1 mt-6">
-              <p className="font-semibold">Authorized Signatory</p>
-            </div>
-          </div>
-        </div>
 
-        {/* Footer */}
-        <div className="mt-6 pt-2 border-t border-gray-300 text-center">
-          <p className="text-[9px] text-gray-400">
-            This is a computer-generated invoice. No signature is required for amounts below NPR 5,000.
-          </p>
+          <div className="px-3 pb-2 text-right">Printed Date & Time : {printedDateTime}</div>
         </div>
       </div>
     );
   }
 );
 
-PrintInvoice.displayName = 'PrintInvoice';
+PrintInvoice.displayName = "PrintInvoice";
 export default PrintInvoice;

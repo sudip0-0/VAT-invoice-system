@@ -6,13 +6,24 @@
 ## Build, Test, and Development Commands
 Install dependencies with `npm install`.
 
-- `npm run dev` starts the Vite dev server.
-- `npm run build` creates the production bundle in `dist/`.
-- `npm run build:dev` builds with development mode settings.
-- `npm run preview` serves the built app locally.
+- `npm run dev` starts the Vite renderer dev server only.
+- `npm run dev:renderer` also starts the renderer dev server only; use this when debugging the React UI without Electron.
+- `npm run dev:desktop` starts the Electron desktop app against a local Vite renderer. This is the main command for desktop development.
+- `npm run build` creates the production renderer bundle in `dist/`.
+- `npm run build:dev` builds the renderer with development mode settings.
+- `npm run build:desktop` builds the renderer and packages the Windows Electron app into `release/`.
+- `npm run preview` serves the built renderer locally for quick browser checks.
+- `npm run preview:desktop` opens Electron against the current local app entrypoint; use this only after a renderer build exists.
 - `npm run lint` runs ESLint across the repo.
 - `npm test` runs Vitest once in `jsdom`.
 - `npm run test:watch` starts Vitest in watch mode.
+- `npx tsc --noEmit` runs a TypeScript type check without generating files.
+
+Useful desktop-specific notes:
+
+- For normal feature work on the desktop app, prefer `npm run dev:desktop` over opening `127.0.0.1` in a browser.
+- `npm run build:desktop` produces the installer and unpacked app under `release/`.
+- If you need to force a different dev port for Electron + Vite, use PowerShell like `$env:VITE_DEV_PORT=8085; npm run dev:desktop`.
 
 ## Coding Style & Naming Conventions
 This project uses TypeScript, React, Tailwind CSS, and shadcn/ui. Follow the existing style: 2-space indentation, semicolons, and double quotes. Prefer the `@/` alias over long relative imports. Use `PascalCase` for React components and page files such as `InvoiceCreatePage.tsx`, `camelCase` for hooks beginning with `use`, and `kebab-case` for utility filenames in `src/lib`. Keep generated shadcn primitives in `src/components/ui` using their current lowercase filenames. Linting is defined in `eslint.config.js`; there is no separate Prettier config in this repo.

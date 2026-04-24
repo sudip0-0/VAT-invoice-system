@@ -10,6 +10,11 @@ import { useToast } from '@/hooks/use-toast';
 import ItemDialog from '@/components/inventory/ItemDialog';
 import StockAdjustmentDialog from '@/components/inventory/StockAdjustmentDialog';
 import type { Item } from '@/hooks/useItems';
+import type { ItemFormData } from '@/components/inventory/ItemDialog';
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Something went wrong';
+}
 
 export default function InventoryPage() {
   const { items, isLoading, createItem, updateItem, deleteItem, adjustStock } = useItems();
@@ -32,19 +37,19 @@ export default function InventoryPage() {
     return item.name.toLowerCase().includes(q) || (item.code || '').toLowerCase().includes(q);
   });
 
-  const handleSubmit = async (data: Record<string, any>) => {
+  const handleSubmit = async (data: ItemFormData) => {
     try {
       if (editingItem) {
         await updateItem.mutateAsync({ id: editingItem.id, ...data });
         toast({ title: 'Item updated' });
       } else {
-        await createItem.mutateAsync(data as any);
+        await createItem.mutateAsync(data);
         toast({ title: 'Item added' });
       }
       setDialogOpen(false);
       setEditingItem(null);
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } catch (e: unknown) {
+      toast({ title: 'Error', description: getErrorMessage(e), variant: 'destructive' });
     }
   };
 
@@ -53,8 +58,8 @@ export default function InventoryPage() {
     try {
       await deleteItem.mutateAsync(deletingItem.id);
       toast({ title: 'Item deleted' });
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } catch (e: unknown) {
+      toast({ title: 'Error', description: getErrorMessage(e), variant: 'destructive' });
     }
     setDeletingItem(null);
   };
@@ -189,8 +194,8 @@ export default function InventoryPage() {
             await adjustStock.mutateAsync(data);
             toast({ title: 'Stock adjusted successfully' });
             setAdjustingItem(null);
-          } catch (e: any) {
-            toast({ title: 'Error', description: e.message, variant: 'destructive' });
+          } catch (e: unknown) {
+            toast({ title: 'Error', description: getErrorMessage(e), variant: 'destructive' });
           }
         }}
         loading={adjustStock.isPending}

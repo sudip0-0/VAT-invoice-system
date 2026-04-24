@@ -1,0 +1,231 @@
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS app_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS app_users (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS profiles (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL DEFAULT '',
+  phone TEXT,
+  avatar_url TEXT,
+  active_business_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS businesses (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'retail',
+  pan_number TEXT,
+  is_vat_registered INTEGER NOT NULL DEFAULT 0,
+  address TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  province TEXT,
+  phone TEXT NOT NULL DEFAULT '',
+  email TEXT,
+  logo_url TEXT,
+  fiscal_year_start INTEGER NOT NULL DEFAULT 4,
+  invoice_prefix TEXT NOT NULL DEFAULT 'INV',
+  next_invoice_num INTEGER NOT NULL DEFAULT 1,
+  currency TEXT NOT NULL DEFAULT 'NPR',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS business_users (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'staff',
+  is_active INTEGER NOT NULL DEFAULT 1,
+  joined_at TEXT NOT NULL,
+  UNIQUE (business_id, user_id),
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tax_rates (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  rate REAL NOT NULL DEFAULT 0,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  UNIQUE (business_id, name),
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS item_categories (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  parent_id TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+  FOREIGN KEY (parent_id) REFERENCES item_categories(id)
+);
+
+CREATE TABLE IF NOT EXISTS items (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  category_id TEXT,
+  tax_rate_id TEXT,
+  code TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  type TEXT NOT NULL DEFAULT 'product',
+  unit TEXT NOT NULL DEFAULT 'PCS',
+  purchase_price REAL,
+  sale_price REAL NOT NULL DEFAULT 0,
+  opening_stock REAL NOT NULL DEFAULT 0,
+  current_stock REAL NOT NULL DEFAULT 0,
+  low_stock_alert REAL,
+  hsn_code TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  UNIQUE (business_id, code),
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+  FOREIGN KEY (category_id) REFERENCES item_categories(id),
+  FOREIGN KEY (tax_rate_id) REFERENCES tax_rates(id)
+);
+
+CREATE TABLE IF NOT EXISTS parties (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'customer',
+  name TEXT NOT NULL,
+  phone TEXT,
+  email TEXT,
+  pan_number TEXT,
+  address TEXT,
+  city TEXT,
+  opening_balance REAL NOT NULL DEFAULT 0,
+  credit_limit REAL,
+  credit_days INTEGER DEFAULT 30,
+  notes TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS invoices (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'sale',
+  status TEXT NOT NULL DEFAULT 'draft',
+  invoice_number TEXT NOT NULL,
+  reference_number TEXT,
+  customer_id TEXT,
+  vendor_id TEXT,
+  issued_date_ad TEXT NOT NULL,
+  issued_date_bs TEXT NOT NULL,
+  due_date_ad TEXT,
+  due_date_bs TEXT,
+  buyer_pan TEXT,
+  is_vat_invoice INTEGER NOT NULL DEFAULT 0,
+  vat_period TEXT,
+  sub_total REAL NOT NULL DEFAULT 0,
+  discount_amount REAL NOT NULL DEFAULT 0,
+  taxable_amount REAL NOT NULL DEFAULT 0,
+  vat_amount REAL NOT NULL DEFAULT 0,
+  total_amount REAL NOT NULL DEFAULT 0,
+  paid_amount REAL NOT NULL DEFAULT 0,
+  balance_due REAL NOT NULL DEFAULT 0,
+  notes TEXT,
+  terms_conditions TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+  FOREIGN KEY (customer_id) REFERENCES parties(id),
+  FOREIGN KEY (vendor_id) REFERENCES parties(id)
+);
+
+CREATE TABLE IF NOT EXISTS invoice_items (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT NOT NULL,
+  item_id TEXT,
+  tax_rate_id TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  unit TEXT NOT NULL DEFAULT 'PCS',
+  quantity REAL NOT NULL DEFAULT 0,
+  rate REAL NOT NULL DEFAULT 0,
+  discount_pct REAL NOT NULL DEFAULT 0,
+  discount_amt REAL NOT NULL DEFAULT 0,
+  vat_rate REAL NOT NULL DEFAULT 0,
+  taxable_amount REAL NOT NULL DEFAULT 0,
+  vat_amount REAL NOT NULL DEFAULT 0,
+  total_amount REAL NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+  FOREIGN KEY (item_id) REFERENCES items(id),
+  FOREIGN KEY (tax_rate_id) REFERENCES tax_rates(id)
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  invoice_id TEXT,
+  party_id TEXT,
+  amount REAL NOT NULL DEFAULT 0,
+  method TEXT NOT NULL DEFAULT 'cash',
+  status TEXT NOT NULL DEFAULT 'completed',
+  payment_date_ad TEXT NOT NULL,
+  payment_date_bs TEXT NOT NULL,
+  reference TEXT,
+  notes TEXT,
+  bank_name TEXT,
+  cheque_number TEXT,
+  cheque_date TEXT,
+  gateway_ref_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+  FOREIGN KEY (invoice_id) REFERENCES invoices(id),
+  FOREIGN KEY (party_id) REFERENCES parties(id)
+);
+
+CREATE TABLE IF NOT EXISTS stock_movements (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  invoice_id TEXT,
+  quantity REAL NOT NULL,
+  direction TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT 'invoice',
+  stock_before REAL NOT NULL DEFAULT 0,
+  stock_after REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+  FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+  FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_business_users_user_id ON business_users(user_id);
+CREATE INDEX IF NOT EXISTS idx_items_business_id ON items(business_id);
+CREATE INDEX IF NOT EXISTS idx_parties_business_id ON parties(business_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_business_id ON invoices(business_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_id ON invoice_items(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_payments_business_id ON payments(business_id);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_business_id ON stock_movements(business_id);

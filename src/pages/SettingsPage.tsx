@@ -31,6 +31,7 @@ export default function SettingsPage() {
           <TabsTrigger value="business" className="text-xs px-3">Business Profile</TabsTrigger>
           <TabsTrigger value="tax" className="text-xs px-3">Tax Rates</TabsTrigger>
           <TabsTrigger value="user" className="text-xs px-3">My Profile</TabsTrigger>
+          <TabsTrigger value="data" className="text-xs px-3">Data</TabsTrigger>
         </TabsList>
 
         <TabsContent value="business" className="mt-4">
@@ -41,6 +42,9 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="user" className="mt-4">
           <UserProfileTab />
+        </TabsContent>
+        <TabsContent value="data" className="mt-4">
+          <DesktopDataTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -420,6 +424,72 @@ function UserProfileTab() {
         <div className="flex justify-end">
           <Button size="sm" variant="outline" className="text-xs" onClick={handleChangePassword} disabled={saving || !newPw}>
             Update Password
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DesktopDataTab() {
+  const { toast } = useToast();
+  const [busyAction, setBusyAction] = useState<'backup' | 'restore' | null>(null);
+
+  const handleBackup = async () => {
+    if (!window.desktopApi) {
+      toast({ title: 'Desktop runtime unavailable', description: 'Backups are only available in the Electron desktop app.', variant: 'destructive' });
+      return;
+    }
+
+    setBusyAction('backup');
+    const response = await window.desktopApi.system.createBackup();
+    setBusyAction(null);
+
+    if (response.error) {
+      toast({ title: 'Backup failed', description: response.error.message, variant: 'destructive' });
+      return;
+    }
+
+    if (!response.data?.canceled) {
+      toast({ title: 'Backup created', description: response.data?.path || 'Database backup saved.' });
+    }
+  };
+
+  const handleRestore = async () => {
+    if (!window.desktopApi) {
+      toast({ title: 'Desktop runtime unavailable', description: 'Restore is only available in the Electron desktop app.', variant: 'destructive' });
+      return;
+    }
+
+    setBusyAction('restore');
+    const response = await window.desktopApi.system.restoreBackup();
+    setBusyAction(null);
+
+    if (response.error) {
+      toast({ title: 'Restore failed', description: response.error.message, variant: 'destructive' });
+      return;
+    }
+
+    if (!response.data?.canceled) {
+      toast({ title: 'Backup restored', description: 'Restart the app or refresh this window to reload restored data.' });
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Local Data</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            This desktop app stores invoices, stock, reports, and settings in a local SQLite database on this machine.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" className="text-xs" onClick={handleBackup} disabled={busyAction !== null}>
+            {busyAction === 'backup' ? 'Creating Backup...' : 'Create Backup'}
+          </Button>
+          <Button size="sm" variant="outline" className="text-xs" onClick={handleRestore} disabled={busyAction !== null}>
+            {busyAction === 'restore' ? 'Restoring Backup...' : 'Restore Backup'}
           </Button>
         </div>
       </div>

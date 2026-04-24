@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Link, useNavigate, Navigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function SignupPage() {
   const { signUp, user, loading: authLoading } = useAuth();
@@ -12,43 +12,34 @@ export default function SignupPage() {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
     if (password.length < 6) {
       setError('Password must be at least 6 characters');
       return;
     }
+
     setLoading(true);
     const { error } = await signUp(email, password, name);
     setLoading(false);
+
     if (error) {
       setError(error.message);
-    } else {
-      setSuccess(true);
+      return;
     }
+
+    navigate('/setup-business');
   };
 
-  if (authLoading) return <div className="flex min-h-screen items-center justify-center bg-background"><div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
-  if (user) return <Navigate to="/" replace />;
+  if (authLoading) {
+    return <div className="flex min-h-screen items-center justify-center bg-background"><div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+  }
 
-  if (success) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <div className="w-full max-w-sm text-center animate-fade-in">
-          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-success font-bold text-success-foreground">✓</div>
-          <h1 className="text-xl font-bold text-foreground">Check your email</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            We've sent a verification link to <strong className="text-foreground">{email}</strong>. Click it to activate your account.
-          </p>
-          <Link to="/login" className="mt-6 inline-block text-sm font-medium text-accent hover:underline">
-            Back to Sign In
-          </Link>
-        </div>
-      </div>
-    );
+  if (user) {
+    return <Navigate to="/" replace />;
   }
 
   return (
@@ -56,17 +47,15 @@ export default function SignupPage() {
       <div className="w-full max-w-sm animate-fade-in">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary font-bold text-primary-foreground">V</div>
-          <h1 className="text-xl font-bold text-foreground">Create your account</h1>
-          <p className="text-sm text-muted-foreground mt-1">Start managing your business</p>
+          <h1 className="text-xl font-bold text-foreground">Create your local account</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Your business data stays on this device</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>
-          )}
+          {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
 
           <div>
-            <label className="block text-xs font-medium text-foreground mb-1.5">Full Name</label>
+            <label className="mb-1.5 block text-xs font-medium text-foreground">Full Name</label>
             <input
               type="text"
               value={name}
@@ -78,7 +67,7 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-foreground mb-1.5">Email</label>
+            <label className="mb-1.5 block text-xs font-medium text-foreground">Email</label>
             <input
               type="email"
               value={email}
@@ -90,7 +79,7 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-foreground mb-1.5">Password</label>
+            <label className="mb-1.5 block text-xs font-medium text-foreground">Password</label>
             <div className="relative">
               <input
                 type={showPw ? 'text' : 'password'}
@@ -110,9 +99,9 @@ export default function SignupPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-md bg-primary py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
+            className="w-full rounded-md bg-primary py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {loading ? 'Creating account...' : 'Create Account'}
+            {loading ? 'Creating account...' : 'Create Local Account'}
           </button>
         </form>
 

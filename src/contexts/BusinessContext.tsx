@@ -47,11 +47,12 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     // Get user's business memberships
     const { data: memberships } = await supabase
       .from('business_users')
-      .select('business_id, role')
-      .eq('user_id', user.id)
-      .eq('is_active', true);
+      .select('business_id, role, is_active')
+      .eq('user_id', user.id);
 
-    if (!memberships || memberships.length === 0) {
+    const activeMemberships = (memberships || []).filter((m) => m.is_active !== false);
+
+    if (activeMemberships.length === 0) {
       setBusinesses([]);
       setBusiness(null);
       setRole(null);
@@ -59,7 +60,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const bizIds = memberships.map((m) => m.business_id);
+    const bizIds = activeMemberships.map((m) => m.business_id);
     const { data: bizzes } = await supabase
       .from('businesses')
       .select('*')
@@ -81,7 +82,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     setBusiness(activeBiz);
 
     if (activeBiz) {
-      const membership = memberships.find((m) => m.business_id === activeBiz.id);
+      const membership = activeMemberships.find((m) => m.business_id === activeBiz.id);
       setRole(membership?.role || null);
     }
 

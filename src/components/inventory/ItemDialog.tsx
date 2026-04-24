@@ -7,12 +7,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import type { Item } from '@/hooks/useItems';
 
+export type ItemFormData = Pick<
+  Item,
+  'name' | 'code' | 'type' | 'unit' | 'sale_price' | 'purchase_price' | 'opening_stock' | 'low_stock_alert' | 'category_id' | 'hsn_code' | 'description'
+> & {
+  current_stock?: number;
+};
+
 interface ItemDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   item?: Item | null;
   categories: { id: string; name: string }[];
-  onSubmit: (data: Record<string, any>) => void;
+  onSubmit: (data: ItemFormData) => void;
   loading?: boolean;
 }
 
@@ -112,10 +119,10 @@ export default function ItemDialog({ open, onOpenChange, item, categories, onSub
             {categories.length > 0 && (
               <div>
                 <Label className="text-xs">Category</Label>
-                <Select value={form.category_id} onValueChange={(v) => set('category_id', v)}>
+                <Select value={form.category_id || '__none'} onValueChange={(v) => set('category_id', v === '__none' ? '' : v)}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="None" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="__none">None</SelectItem>
                     {categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                   </SelectContent>
                 </Select>

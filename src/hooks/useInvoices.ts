@@ -138,13 +138,19 @@ export function useInvoices() {
       invoice: Partial<TablesInsert<'invoices'>>;
       items?: Omit<TablesInsert<'invoice_items'>, 'invoice_id'>[];
     }) => {
-      const { error: invErr } = await supabase
+      const { business_id, ...invoiceUpdates } = invoice;
+      const { data: existingInvoice, error: invErr } = await supabase
         .from('invoices')
-        .update({ ...invoice, updated_at: new Date().toISOString() })
-        .eq('id', id);
+        .update({ ...invoiceUpdates, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('business_id', business!.id)
+        .select('id')
+        .single();
       if (invErr) throw invErr;
 
       if (items !== undefined) {
+        if (!existingInvoice) throw new Error('Invoice not found');
+
         // Delete existing items and re-insert
         const { error: delErr } = await supabase
           .from('invoice_items')
@@ -166,8 +172,9 @@ export function useInvoices() {
 
       return id;
     },
-    onSuccess: () => {
+    onSuccess: (id) => {
       qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: ['invoice', business?.id, id] });
     },
   });
 
@@ -176,13 +183,16 @@ export function useInvoices() {
       const { error } = await supabase
         .from('invoices')
         .update({ status: 'cancelled' as any, updated_at: new Date().toISOString() })
-        .eq('id', id);
+        .eq('id', id)
+        .eq('business_id', business!.id)
+        .select('id')
+        .single();
       if (error) throw error;
       return id;
     },
     onSuccess: (id) => {
       qc.invalidateQueries({ queryKey: key });
-      qc.invalidateQueries({ queryKey: ['invoice', id] });
+      qc.invalidateQueries({ queryKey: ['invoice', business?.id, id] });
       qc.invalidateQueries({ queryKey: ['items', business?.id] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
     },
@@ -195,13 +205,14 @@ export function useInvoiceDetail(id: string | undefined) {
   const { business } = useBusiness();
 
   return useQuery({
-    queryKey: ['invoice', id],
+    queryKey: ['invoice', business?.id, id],
     enabled: !!id && !!business?.id,
     queryFn: async () => {
       const { data, error } = await supabase
         .from('invoices')
         .select('*, customer:parties!invoices_customer_id_fkey(name, phone, email, address, city, pan_number), vendor:parties!invoices_vendor_id_fkey(name, phone, email, address, city, pan_number), invoice_items(*)')
         .eq('id', id!)
+        .eq('business_id', business!.id)
         .single();
       if (error) throw error;
       return data as InvoiceDetail;
@@ -214,7 +225,7 @@ export function useInvoicePayments(invoiceId: string | undefined) {
   const qc = useQueryClient();
 
   const query = useQuery({
-    queryKey: ['payments', invoiceId],
+    queryKey: ['payments', business?.id, invoiceId],
     enabled: !!invoiceId && !!business?.id,
     queryFn: async () => {
       const { data, error } = await supabase
@@ -230,6 +241,17 @@ export function useInvoicePayments(invoiceId: string | undefined) {
 
   const recordPayment = useMutation({
     mutationFn: async (payment: Omit<TablesInsert<'payments'>, 'business_id'>) => {
+      if (payment.invoice_id) {
+        const { data: invoice, error: invoiceErr } = await supabase
+          .from('invoices')
+          .select('id')
+          .eq('id', payment.invoice_id)
+          .eq('business_id', business!.id)
+          .single();
+        if (invoiceErr) throw invoiceErr;
+        if (!invoice) throw new Error('Invoice not found');
+      }
+
       const { data, error } = await supabase
         .from('payments')
         .insert({ ...payment, business_id: business!.id })
@@ -243,6 +265,7 @@ export function useInvoicePayments(invoiceId: string | undefined) {
           .from('invoices')
           .select('paid_amount, total_amount')
           .eq('id', payment.invoice_id)
+          .eq('business_id', business!.id)
           .single();
         if (inv) {
           const newPaid = Number(inv.paid_amount) + Number(payment.amount);
@@ -255,15 +278,16 @@ export function useInvoicePayments(invoiceId: string | undefined) {
               balance_due: Math.max(0, newBalance),
               ...(newStatus ? { status: newStatus } : {}),
             })
-            .eq('id', payment.invoice_id);
+            .eq('id', payment.invoice_id)
+            .eq('business_id', business!.id);
         }
       }
 
       return data;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['payments', invoiceId] });
-      qc.invalidateQueries({ queryKey: ['invoice', invoiceId] });
+      qc.invalidateQueries({ queryKey: ['payments', business?.id, invoiceId] });
+      qc.invalidateQueries({ queryKey: ['invoice', business?.id, invoiceId] });
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
     },
