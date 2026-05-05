@@ -156,6 +156,17 @@ export function getVATPeriod(bs: BSDate): string {
   return `${bs.year}/${String(bs.month).padStart(2, '0')}`;
 }
 
+export function getVATReturnDeadline(vatPeriod: string): string {
+  const [yearPart, monthPart] = vatPeriod.split('/');
+  const year = Number(yearPart);
+  const month = Number(monthPart);
+  if (!year || !month || month < 1 || month > 12) return '';
+
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  return formatBSShort({ year: nextYear, month: nextMonth, day: 25 });
+}
+
 /** Get min/max supported BS years */
 export const BS_MIN_YEAR = Math.min(...Object.keys(BS_CALENDAR_DATA).map(Number));
 export const BS_MAX_YEAR = Math.max(...Object.keys(BS_CALENDAR_DATA).map(Number));

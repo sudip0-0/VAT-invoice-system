@@ -31,6 +31,9 @@ export interface BusinessRow {
   logo_url: string | null;
   name: string;
   next_invoice_num: number;
+  next_purchase_bill_num: number;
+  next_quotation_num: number;
+  next_sales_invoice_num: number;
   pan_number: string | null;
   phone: string;
   province: string | null;
@@ -45,16 +48,38 @@ export interface InvoiceItemRow {
   id: string;
   invoice_id: string;
   item_id: string | null;
+  hsn_code: string | null;
   name: string;
   quantity: number;
   rate: number;
   sort_order: number;
   tax_rate_id: string | null;
+  tax_type: TaxType;
   taxable_amount: number;
   total_amount: number;
   unit: string;
   vat_amount: number;
   vat_rate: number;
+}
+
+export interface InvoiceEventRow {
+  action: string;
+  business_id: string;
+  created_at: string;
+  details: string | null;
+  id: string;
+  invoice_id: string;
+  user_id: string | null;
+}
+
+export interface DocumentSequenceRow {
+  business_id: string;
+  created_at: string;
+  document_type: InvoiceType;
+  fiscal_year: string;
+  id: string;
+  next_serial: number;
+  updated_at: string;
 }
 
 export interface InvoiceRow {
@@ -64,12 +89,16 @@ export interface InvoiceRow {
   buyer_name: string | null;
   buyer_pan: string | null;
   buyer_phone: string | null;
+  cancellation_reason: string | null;
+  cancelled_at: string | null;
   created_at: string;
   customer_id: string | null;
   deleted_at: string | null;
   discount_amount: number;
   due_date_ad: string | null;
   due_date_bs: string | null;
+  document_serial: number | null;
+  fiscal_year: string | null;
   id: string;
   invoice_number: string;
   is_vat_invoice: boolean;
@@ -77,6 +106,7 @@ export interface InvoiceRow {
   issued_date_bs: string;
   notes: string | null;
   paid_amount: number;
+  print_count: number;
   reference_number: string | null;
   status: InvoiceStatus;
   sub_total: number;
@@ -85,6 +115,7 @@ export interface InvoiceRow {
   total_amount: number;
   type: InvoiceType;
   updated_at: string;
+  last_printed_at: string | null;
   vat_amount: number;
   vat_period: string | null;
   vendor_id: string | null;
@@ -213,8 +244,10 @@ export interface TaxRateRow {
 
 export interface TableRowMap {
   business_users: BusinessUserRow;
+  document_sequences: DocumentSequenceRow;
   businesses: BusinessRow;
   expenses: ExpenseRow;
+  invoice_events: InvoiceEventRow;
   invoice_items: InvoiceItemRow;
   invoices: InvoiceRow;
   item_categories: ItemCategoryRow;

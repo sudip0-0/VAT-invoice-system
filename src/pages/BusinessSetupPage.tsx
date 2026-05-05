@@ -34,6 +34,10 @@ export default function BusinessSetupPage() {
     e.preventDefault();
     if (!user) return;
     setError('');
+    if (isVat && !panNumber.trim()) {
+      setError('PAN/VAT number is required for VAT-registered businesses.');
+      return;
+    }
     setLoading(true);
 
     try {

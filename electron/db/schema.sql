@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS businesses (
   fiscal_year_start INTEGER NOT NULL DEFAULT 4,
   invoice_prefix TEXT NOT NULL DEFAULT 'INV',
   next_invoice_num INTEGER NOT NULL DEFAULT 1,
+  next_sales_invoice_num INTEGER NOT NULL DEFAULT 1,
+  next_purchase_bill_num INTEGER NOT NULL DEFAULT 1,
+  next_quotation_num INTEGER NOT NULL DEFAULT 1,
   currency TEXT NOT NULL DEFAULT 'NPR',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -141,6 +144,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   issued_date_bs TEXT NOT NULL,
   due_date_ad TEXT,
   due_date_bs TEXT,
+  fiscal_year TEXT,
+  document_serial INTEGER,
   buyer_name TEXT,
   buyer_pan TEXT,
   buyer_phone TEXT,
@@ -154,6 +159,10 @@ CREATE TABLE IF NOT EXISTS invoices (
   total_amount REAL NOT NULL DEFAULT 0,
   paid_amount REAL NOT NULL DEFAULT 0,
   balance_due REAL NOT NULL DEFAULT 0,
+  print_count INTEGER NOT NULL DEFAULT 0,
+  last_printed_at TEXT,
+  cancellation_reason TEXT,
+  cancelled_at TEXT,
   notes TEXT,
   terms_conditions TEXT,
   created_at TEXT NOT NULL,
@@ -169,8 +178,10 @@ CREATE TABLE IF NOT EXISTS invoice_items (
   invoice_id TEXT NOT NULL,
   item_id TEXT,
   tax_rate_id TEXT,
+  tax_type TEXT NOT NULL DEFAULT 'vat_13',
   name TEXT NOT NULL,
   description TEXT,
+  hsn_code TEXT,
   unit TEXT NOT NULL DEFAULT 'PCS',
   quantity REAL NOT NULL DEFAULT 0,
   rate REAL NOT NULL DEFAULT 0,
@@ -207,6 +218,31 @@ CREATE TABLE IF NOT EXISTS payments (
   FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
   FOREIGN KEY (invoice_id) REFERENCES invoices(id),
   FOREIGN KEY (party_id) REFERENCES parties(id)
+);
+
+CREATE TABLE IF NOT EXISTS invoice_events (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  invoice_id TEXT NOT NULL,
+  user_id TEXT,
+  action TEXT NOT NULL,
+  details TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+  FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES app_users(id)
+);
+
+CREATE TABLE IF NOT EXISTS document_sequences (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  document_type TEXT NOT NULL,
+  fiscal_year TEXT NOT NULL,
+  next_serial INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (business_id, document_type, fiscal_year),
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS expenses (
@@ -251,11 +287,16 @@ CREATE INDEX IF NOT EXISTS idx_parties_business_type_name ON parties(business_id
 CREATE INDEX IF NOT EXISTS idx_invoices_business_id ON invoices(business_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_business_type_status_created ON invoices(business_id, type, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_invoices_business_type_issued_date ON invoices(business_id, type, issued_date_ad);
+CREATE INDEX IF NOT EXISTS idx_invoices_business_type_fiscal_serial ON invoices(business_id, type, fiscal_year, document_serial);
 CREATE INDEX IF NOT EXISTS idx_invoices_business_invoice_number ON invoices(business_id, invoice_number);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_business_invoice_number_unique ON invoices(business_id, invoice_number);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_id ON invoice_items(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_payments_business_id ON payments(business_id);
 CREATE INDEX IF NOT EXISTS idx_payments_business_party_status ON payments(business_id, party_id, status);
 CREATE INDEX IF NOT EXISTS idx_payments_business_payment_date ON payments(business_id, payment_date_ad);
+CREATE INDEX IF NOT EXISTS idx_invoice_events_invoice_created ON invoice_events(invoice_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_invoice_events_business_created ON invoice_events(business_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_document_sequences_business_type_year ON document_sequences(business_id, document_type, fiscal_year);
 CREATE INDEX IF NOT EXISTS idx_expenses_business_date ON expenses(business_id, expense_date_ad);
 CREATE INDEX IF NOT EXISTS idx_expenses_business_category ON expenses(business_id, category);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_business_id ON stock_movements(business_id);

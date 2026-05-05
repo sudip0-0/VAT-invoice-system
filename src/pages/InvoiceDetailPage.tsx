@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Printer, CreditCard, Pencil, Ban, FileOutput, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -12,7 +13,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useInvoiceDetail, useInvoicePayments, useInvoices } from '@/hooks/useInvoices';
+import { useInvoiceDetail, useInvoiceEvents, useInvoicePayments, useInvoices } from '@/hooks/useInvoices';
 import { useBusiness } from '@/contexts/BusinessContext';
 import { useToast } from '@/hooks/use-toast';
 import { formatNPR } from '@/lib/nepal-format';
@@ -22,6 +23,7 @@ import PaymentDialog from '@/components/invoices/PaymentDialog';
 import PrintInvoice from '@/components/invoices/PrintInvoice';
 import { nepalTodayISO } from '@/lib/nepal-date';
 import { formatBSShort, getVATPeriod, todayBS } from '@/lib/bs-calendar';
+import { canDirectlyEditInvoice } from '@/lib/vat-compliance';
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -31,14 +33,19 @@ export default function InvoiceDetailPage() {
   const { business } = useBusiness();
   const { data: invoice, isLoading } = useInvoiceDetail(id);
   const { payments, recordPayment } = useInvoicePayments(id);
-  const { cancelInvoice, createInvoice } = useInvoices();
+  const { data: invoiceEvents = [] } = useInvoiceEvents(id);
+  const { cancelInvoice, createInvoice, recordInvoicePrint } = useInvoices();
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
   const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
   const [printSize, setPrintSize] = useState<"a4" | "a5">("a5");
   const [showPrint, setShowPrint] = useState(false);
 
   const handlePrint = () => {
+    if (id) {
+      recordInvoicePrint.mutate(id);
+    }
     setShowPrint(true);
     setPrintOptionsOpen(false);
     const printStyle = document.createElement('style');
@@ -77,9 +84,10 @@ export default function InvoiceDetailPage() {
 
   const handleCancel = async () => {
     try {
-      await cancelInvoice.mutateAsync(id!);
+      await cancelInvoice.mutateAsync({ id: id!, reason: cancelReason });
       toast({ title: 'Invoice cancelled' });
       setCancelOpen(false);
+      setCancelReason('');
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
@@ -104,7 +112,7 @@ export default function InvoiceDetailPage() {
   const partyId = invoice.customer_id || invoice.vendor_id;
   const lineItems = (invoice.invoice_items || []).sort((a, b) => a.sort_order - b.sort_order);
   const isCancelled = invoice.status === 'cancelled';
-  const canEdit = !isCancelled && invoice.status !== 'paid';
+  const canEdit = canDirectlyEditInvoice(invoice);
   const isQuotation = invoice.type === 'quotation';
   const backPath = isQuotation ? '/quotations' : '/invoices';
 
@@ -141,7 +149,7 @@ export default function InvoiceDetailPage() {
       const todayBs = formatBSShort(todayBsDate);
       const newId = await createInvoice.mutateAsync({
         invoice: {
-          invoice_number: `${business?.invoice_prefix || 'INV'}-${String(business?.next_invoice_num || 1).padStart(4, '0')}`,
+          invoice_number: `${business?.invoice_prefix || 'INV'}-${String(business?.next_sales_invoice_num || business?.next_invoice_num || 1).padStart(4, '0')}`,
           type: 'sale',
           status: 'draft',
           customer_id: invoice.customer_id,
@@ -167,12 +175,14 @@ export default function InvoiceDetailPage() {
         },
         items: lineItems.map((l) => ({
           item_id: l.item_id,
+          hsn_code: l.hsn_code,
           name: l.name,
           unit: l.unit,
           quantity: l.quantity,
           rate: l.rate,
           discount_pct: l.discount_pct,
           discount_amt: l.discount_amt,
+          tax_type: l.tax_type,
           vat_rate: l.vat_rate,
           taxable_amount: l.taxable_amount,
           vat_amount: l.vat_amount,
@@ -245,6 +255,7 @@ export default function InvoiceDetailPage() {
             <p className="text-xs text-muted-foreground">Date (AD): {new Date(invoice.issued_date_ad).toLocaleDateString()}</p>
             {invoice.due_date_bs && <p className="text-xs text-muted-foreground">Due: {invoice.due_date_bs}</p>}
             {invoice.vat_period && <p className="text-xs text-muted-foreground">VAT Period: {invoice.vat_period}</p>}
+            {invoice.print_count > 0 && <p className="text-xs text-muted-foreground">Printed: {invoice.print_count} time{invoice.print_count === 1 ? '' : 's'}</p>}
             {isCancelled && <p className="text-xs font-bold text-destructive mt-1">CANCELLED</p>}
           </div>
         </div>
@@ -357,6 +368,13 @@ export default function InvoiceDetailPage() {
           </div>
         )}
 
+        {isCancelled && invoice.cancellation_reason && (
+          <div className="mt-4 pt-3 border-t border-border">
+            <p className="text-[10px] uppercase text-muted-foreground font-medium mb-1">Cancellation Reason</p>
+            <p className="text-xs text-destructive">{invoice.cancellation_reason}</p>
+          </div>
+        )}
+
         {/* Amount in Words */}
         <div className="mt-4 pt-3 border-t border-border">
           <p className="text-[10px] uppercase text-muted-foreground font-medium mb-1">Amount in Words</p>
@@ -393,6 +411,34 @@ export default function InvoiceDetailPage() {
                         {p.status}
                       </span>
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {invoiceEvents.length > 0 && (
+        <div className="rounded-lg border border-border bg-card p-4 print:hidden">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Invoice Audit Log</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border bg-muted/50">
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Time</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Action</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">User</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoiceEvents.map((event) => (
+                  <tr key={event.id} className="border-b border-border last:border-0">
+                    <td className="px-3 py-2 text-foreground">{new Date(event.created_at).toLocaleString()}</td>
+                    <td className="px-3 py-2 font-medium text-foreground capitalize">{event.action.replace(/_/g, ' ')}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{event.user_id || 'System'}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{event.details || '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -465,9 +511,22 @@ export default function InvoiceDetailPage() {
               This will mark invoice <strong>{invoice.invoice_number}</strong> as cancelled. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label className="text-xs">Cancellation Reason *</Label>
+            <Textarea
+              value={cancelReason}
+              onChange={(event) => setCancelReason(event.target.value)}
+              className="text-sm"
+              placeholder="Enter the business reason for cancellation..."
+            />
+          </div>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep Invoice</AlertDialogCancel>
-            <AlertDialogAction onClick={handleCancel} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogCancel onClick={() => setCancelReason('')}>Keep Invoice</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCancel}
+              disabled={!cancelReason.trim() || cancelInvoice.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
               Cancel Invoice
             </AlertDialogAction>
           </AlertDialogFooter>

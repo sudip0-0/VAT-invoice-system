@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { useInvoices, useInvoiceDetail, useTaxRates } from '@/hooks/useInvoices';
+import { useInvoices, useInvoiceDetail } from '@/hooks/useInvoices';
 import { useParties } from '@/hooks/useParties';
 import { useItems } from '@/hooks/useItems';
 import { useBusiness } from '@/contexts/BusinessContext';
@@ -23,16 +23,26 @@ import {
   type CashCustomerDetails,
   emptyCashCustomerDetails,
 } from '@/lib/cash-customer';
+import { STATUTORY_VAT_RATE, calculateVATLine, canDirectlyEditInvoice, canIssueVATInvoice, getVATRateForTaxType, hasRequiredBuyerPan, type LineTaxType } from '@/lib/vat-compliance';
+
+const LINE_TAX_TYPES: Array<{ value: LineTaxType; label: string }> = [
+  { value: 'vat_13', label: 'VAT 13%' },
+  { value: 'zero_rated', label: 'Zero-rated' },
+  { value: 'exempt', label: 'Exempt' },
+  { value: 'non_taxable', label: 'Non-taxable' },
+];
 
 interface LineItem {
   key: string;
   item_id: string | null;
+  hsn_code: string | null;
   name: string;
   unit: string;
   quantity: number;
   rate: number;
   discount_pct: number;
   discount_amt: number;
+  tax_type: LineTaxType;
   vat_rate: number;
   taxable_amount: number;
   vat_amount: number;
@@ -41,24 +51,18 @@ interface LineItem {
 }
 
 function calcLine(line: LineItem): LineItem {
-  const gross = line.quantity * line.rate;
-  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : 0;
-  const taxable = gross - discAmt;
-  const vat = taxable * (line.vat_rate / 100);
+  const totals = calculateVATLine(line);
   return {
     ...line,
-    discount_amt: discAmt,
-    taxable_amount: taxable,
-    vat_amount: vat,
-    total_amount: taxable + vat,
+    ...totals,
   };
 }
 
 function newLine(): LineItem {
   return {
     key: crypto.randomUUID(),
-    item_id: null, name: '', unit: 'PCS', quantity: 1, rate: 0,
-    discount_pct: 0, discount_amt: 0, vat_rate: 0,
+    item_id: null, hsn_code: null, name: '', unit: 'PCS', quantity: 1, rate: 0,
+    discount_pct: 0, discount_amt: 0, tax_type: 'non_taxable', vat_rate: 0,
     taxable_amount: 0, vat_amount: 0, total_amount: 0,
     is_custom: false,
   };
@@ -73,7 +77,6 @@ export default function InvoiceEditPage() {
   const { data: invoice, isLoading } = useInvoiceDetail(id);
   const { data: parties = [] } = useParties();
   const { items: inventoryItems } = useItems();
-  const { data: taxRates = [] } = useTaxRates();
 
   const [initialized, setInitialized] = useState(false);
   const [invoiceType, setInvoiceType] = useState<'sale' | 'purchase'>('sale');
@@ -113,12 +116,14 @@ export default function InvoiceEditPage() {
         .map((item) => calcLine({
           key: crypto.randomUUID(),
           item_id: item.item_id,
+          hsn_code: item.hsn_code,
           name: item.name,
           unit: item.unit,
           quantity: Number(item.quantity),
           rate: Number(item.rate),
           discount_pct: Number(item.discount_pct),
           discount_amt: Number(item.discount_amt),
+          tax_type: (item.tax_type || (Number(item.vat_rate) > 0 ? 'vat_13' : 'non_taxable')) as LineTaxType,
           vat_rate: Number(item.vat_rate),
           taxable_amount: Number(item.taxable_amount),
           vat_amount: Number(item.vat_amount),
@@ -129,11 +134,6 @@ export default function InvoiceEditPage() {
       setInitialized(true);
     }
   }, [invoice, initialized]);
-
-  const vatRate = useMemo(() => {
-    const vat13 = taxRates.find((t) => t.type === 'vat_13');
-    return vat13?.rate ?? 13;
-  }, [taxRates]);
 
   const filteredParties = useMemo(() => {
     return parties.filter((p) => {
@@ -150,8 +150,8 @@ export default function InvoiceEditPage() {
     const item = inventoryItems.find((i) => i.id === itemId);
     if (!item) return;
     const rate = invoiceType === 'sale' ? item.sale_price : (item.purchase_price ?? item.sale_price);
-    updateLine(key, { item_id: itemId, name: item.name, unit: item.unit, rate, vat_rate: isVat ? vatRate : 0, is_custom: false });
-  }, [inventoryItems, invoiceType, isVat, vatRate, updateLine]);
+    updateLine(key, { item_id: itemId, hsn_code: item.hsn_code || null, name: item.name, unit: item.unit, rate, tax_type: isVat ? 'vat_13' : 'non_taxable', vat_rate: isVat ? STATUTORY_VAT_RATE : 0, is_custom: false });
+  }, [inventoryItems, invoiceType, isVat, updateLine]);
 
   const addLine = () => setLines((prev) => [...prev, newLine()]);
   const removeLine = (key: string) => setLines((prev) => prev.length > 1 ? prev.filter((l) => l.key !== key) : prev);
@@ -179,10 +179,23 @@ export default function InvoiceEditPage() {
   const handleSave = async (status: 'draft' | 'issued') => {
     if (!partyId) { toast({ title: 'Select a party', variant: 'destructive' }); return; }
     if (lines.every((l) => !l.name.trim())) { toast({ title: 'Add at least one item', variant: 'destructive' }); return; }
+    if (invoice && !canDirectlyEditInvoice(invoice)) {
+      toast({ title: 'Issued VAT invoices cannot be edited directly', variant: 'destructive' });
+      return;
+    }
+    if (!canIssueVATInvoice(isVat, Boolean(business?.is_vat_registered))) {
+      toast({ title: 'VAT invoices require a VAT-registered business', variant: 'destructive' });
+      return;
+    }
 
     const validLines = lines.filter((l) => l.name.trim());
     const selectedParty = parties.find((p) => p.id === partyId);
     const isCashCustomer = invoiceType === 'sale' && partyId === CASH_CUSTOMER_ID;
+    const buyerPan = isCashCustomer ? cashCustomerDetails.panNumber || null : selectedParty?.pan_number || null;
+    if (!hasRequiredBuyerPan(invoiceType, status, isVat, buyerPan)) {
+      toast({ title: 'Buyer PAN/VAT number is required to issue VAT sales invoices', variant: 'destructive' });
+      return;
+    }
     const paidAmount = Number(invoice?.paid_amount || 0);
     const newBalance = totals.totalAmount - paidAmount;
 
@@ -195,7 +208,7 @@ export default function InvoiceEditPage() {
           customer_id: invoiceType === 'sale' && !isCashCustomer ? partyId : null,
           vendor_id: invoiceType === 'purchase' ? partyId : null,
           buyer_name: isCashCustomer ? cashCustomerDetails.name || CASH_CUSTOMER_NAME : selectedParty?.name || null,
-          buyer_pan: isCashCustomer ? cashCustomerDetails.panNumber || null : selectedParty?.pan_number || null,
+          buyer_pan: buyerPan,
           buyer_phone: isCashCustomer ? cashCustomerDetails.phone || null : selectedParty?.phone || null,
           buyer_address: isCashCustomer ? cashCustomerDetails.address || null : [selectedParty?.address, selectedParty?.city].filter(Boolean).join(', ') || null,
           is_vat_invoice: isVat,
@@ -214,12 +227,14 @@ export default function InvoiceEditPage() {
         },
         items: validLines.map((l) => ({
           item_id: l.item_id,
+          hsn_code: l.hsn_code,
           name: l.name,
           unit: l.unit,
           quantity: l.quantity,
           rate: l.rate,
           discount_pct: l.discount_pct,
           discount_amt: l.discount_amt,
+          tax_type: l.tax_type,
           vat_rate: l.vat_rate,
           taxable_amount: l.taxable_amount,
           vat_amount: l.vat_amount,
@@ -239,8 +254,8 @@ export default function InvoiceEditPage() {
 
   if (isLoading) return <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>;
   if (!invoice) return <div className="p-8 text-center text-sm text-muted-foreground">Invoice not found.</div>;
-  if (invoice.status === 'cancelled') {
-    return <div className="p-8 text-center text-sm text-muted-foreground">Cancelled invoices cannot be edited.</div>;
+  if (!canDirectlyEditInvoice(invoice)) {
+    return <div className="p-8 text-center text-sm text-muted-foreground">This invoice cannot be edited directly. Use cancellation or a correction document after accountant/IRD confirmation.</div>;
   }
 
   return (
@@ -305,9 +320,12 @@ export default function InvoiceEditPage() {
           <label className="flex items-center gap-2 text-xs">
             <input type="checkbox" checked={isVat} onChange={(e) => {
               setIsVat(e.target.checked);
-              setLines((prev) => prev.map((l) => calcLine({ ...l, vat_rate: e.target.checked ? vatRate : 0 })));
+              setLines((prev) => prev.map((l) => {
+                const taxType = e.target.checked ? 'vat_13' : 'non_taxable';
+                return calcLine({ ...l, tax_type: taxType, vat_rate: getVATRateForTaxType(taxType) });
+              }));
             }} className="rounded" />
-            VAT Invoice (13%)
+            VAT Invoice ({STATUTORY_VAT_RATE}%)
           </label>
         )}
       </div>
@@ -324,6 +342,7 @@ export default function InvoiceEditPage() {
                 <th className="px-3 py-2 text-left font-medium text-muted-foreground w-16">Unit</th>
                 <th className="px-3 py-2 text-right font-medium text-muted-foreground w-24">Rate</th>
                 <th className="px-3 py-2 text-right font-medium text-muted-foreground w-16">Disc%</th>
+                {isVat && <th className="px-3 py-2 text-left font-medium text-muted-foreground w-36">Tax</th>}
                 {isVat && <th className="px-3 py-2 text-right font-medium text-muted-foreground w-20">VAT</th>}
                 <th className="px-3 py-2 text-right font-medium text-muted-foreground w-24">Total</th>
                 <th className="px-3 py-2 w-8"></th>
@@ -340,7 +359,7 @@ export default function InvoiceEditPage() {
                       displayName={line.name}
                       mode={invoiceType === 'purchase' ? 'purchase' : 'sale'}
                       onSelect={(itemId) => selectItem(line.key, itemId)}
-                      onCustom={() => updateLine(line.key, { item_id: null, name: '', is_custom: true })}
+                      onCustom={() => updateLine(line.key, { item_id: null, hsn_code: null, name: '', is_custom: true })}
                     />
                     {line.is_custom && (
                       <Input value={line.name} onChange={(e) => updateLine(line.key, { name: e.target.value })} placeholder="Item name" className="h-7 text-xs mt-1" />
@@ -356,6 +375,19 @@ export default function InvoiceEditPage() {
                   <td className="px-3 py-2">
                     <Input type="number" min="0" max="100" step="0.1" value={line.discount_pct} onChange={(e) => updateLine(line.key, { discount_pct: Number(e.target.value) })} className="h-8 text-xs text-right w-16 border-0 bg-transparent shadow-none px-0" />
                   </td>
+                  {isVat && (
+                    <td className="px-3 py-2">
+                      <Select
+                        value={line.tax_type}
+                        onValueChange={(value: LineTaxType) => updateLine(line.key, { tax_type: value, vat_rate: getVATRateForTaxType(value) })}
+                      >
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {LINE_TAX_TYPES.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </td>
+                  )}
                   {isVat && (
                     <td className="px-3 py-2 text-right text-muted-foreground">
                       {formatNPR(line.vat_amount, { showSymbol: false })}
@@ -405,7 +437,7 @@ export default function InvoiceEditPage() {
                 <span>{formatNPR(totals.taxableAmount, { showSymbol: false })}</span>
               </div>
               <div className="flex justify-between text-muted-foreground">
-                <span>VAT (13%)</span>
+                <span>VAT ({STATUTORY_VAT_RATE}%)</span>
                 <span>{formatNPR(totals.vatAmount, { showSymbol: false })}</span>
               </div>
             </>

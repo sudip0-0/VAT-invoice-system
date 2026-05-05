@@ -142,9 +142,11 @@ Important behavior:
 
 ## Known Gaps
 
-- The automated test suite is currently minimal and contains only a placeholder example.
+- The automated test suite is still limited, but now includes focused coverage for shortcuts, VAT compliance helpers, BS calendar deadlines, VAT return aggregation, and report calculations.
 - The repo has no full local seed/demo-data workflow yet.
 - Many reports are computed in the frontend from operational data instead of a dedicated reporting backend.
+- CBMS/e-billing integration is not implemented. Businesses that are required to use IRD-approved electronic billing or CBMS must obtain accountant/IRD confirmation before using this app as their statutory billing system.
+- VAT return, purchase book, and sales book reports are compliance aids, not a substitute for review against the official IRD return and annex forms before filing.
 
 ## Development Notes
 

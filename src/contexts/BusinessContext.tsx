@@ -13,6 +13,9 @@ interface Business {
   phone: string;
   invoice_prefix: string;
   next_invoice_num: number;
+  next_sales_invoice_num: number;
+  next_purchase_bill_num: number;
+  next_quotation_num: number;
 }
 
 interface BusinessContextType {
@@ -22,6 +25,7 @@ interface BusinessContextType {
   loading: boolean;
   switchBusiness: (id: string) => Promise<void>;
   setNextInvoiceNum: (nextInvoiceNum: number) => void;
+  setNextDocumentNum: (type: string | undefined, nextDocumentNum: number) => void;
   refetch: () => Promise<void>;
 }
 
@@ -123,8 +127,29 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     );
   }, [business?.id]);
 
+  const setNextDocumentNum = useCallback((type: string | undefined, nextDocumentNum: number) => {
+    const activeBusinessId = business?.id;
+    if (!activeBusinessId) return;
+
+    const counterKey =
+      type === 'purchase'
+        ? 'next_purchase_bill_num'
+        : type === 'quotation'
+          ? 'next_quotation_num'
+          : 'next_sales_invoice_num';
+
+    setBusiness((prev) => (prev ? { ...prev, [counterKey]: nextDocumentNum } : prev));
+    setBusinesses((prev) =>
+      prev.map((biz) => (biz.id === activeBusinessId ? { ...biz, [counterKey]: nextDocumentNum } : biz))
+    );
+
+    if (type === 'sale') {
+      setNextInvoiceNum(nextDocumentNum);
+    }
+  }, [business?.id, setNextInvoiceNum]);
+
   return (
-    <BusinessContext.Provider value={{ business, businesses, role, loading, switchBusiness, setNextInvoiceNum, refetch: fetchBusinesses }}>
+    <BusinessContext.Provider value={{ business, businesses, role, loading, switchBusiness, setNextInvoiceNum, setNextDocumentNum, refetch: fetchBusinesses }}>
       {children}
     </BusinessContext.Provider>
   );

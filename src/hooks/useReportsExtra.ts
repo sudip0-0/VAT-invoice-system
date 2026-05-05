@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
+import { calculateVATReturnSummary } from '@/lib/vat-return';
+export type { VATReturnRow } from '@/lib/vat-return';
 
 // ── Item-wise Sales/Purchase ──
 
@@ -304,12 +306,6 @@ export function useOutstandingReport(dateFrom: string, dateTo: string) {
 
 // ── VAT Return Summary (Nepal IRD format) ──
 
-export interface VATReturnRow {
-  label: string;
-  amount: number;
-  vat: number;
-}
-
 export function useVATReturnSummary(dateFrom: string, dateTo: string) {
   const { business } = useBusiness();
 
@@ -319,7 +315,7 @@ export function useVATReturnSummary(dateFrom: string, dateTo: string) {
     queryFn: async () => {
       const { data, error } = await localDb
         .from('invoices')
-        .select('type, is_vat_invoice, taxable_amount, vat_amount, total_amount')
+        .select('type, is_vat_invoice, taxable_amount, vat_amount, total_amount, invoice_items(tax_type, total_amount)')
         .eq('business_id', business!.id)
         .is('deleted_at', null)
         .neq('status', 'cancelled')
@@ -327,48 +323,7 @@ export function useVATReturnSummary(dateFrom: string, dateTo: string) {
         .lte('issued_date_ad', dateTo);
       if (error) throw error;
 
-      let salesTaxable = 0, salesVAT = 0, salesExempt = 0;
-      let purchaseTaxable = 0, purchaseVAT = 0, purchaseExempt = 0;
-      let saleReturnTaxable = 0, saleReturnVAT = 0;
-      let purchaseReturnTaxable = 0, purchaseReturnVAT = 0;
-
-      for (const inv of data || []) {
-        const taxable = Number(inv.taxable_amount);
-        const vat = Number(inv.vat_amount);
-        const total = Number(inv.total_amount);
-
-        if (inv.type === 'sale') {
-          if (inv.is_vat_invoice) { salesTaxable += taxable; salesVAT += vat; }
-          else salesExempt += total;
-        } else if (inv.type === 'purchase') {
-          if (inv.is_vat_invoice) { purchaseTaxable += taxable; purchaseVAT += vat; }
-          else purchaseExempt += total;
-        } else if (inv.type === 'sale_return') {
-          saleReturnTaxable += taxable; saleReturnVAT += vat;
-        } else if (inv.type === 'purchase_return') {
-          purchaseReturnTaxable += taxable; purchaseReturnVAT += vat;
-        }
-      }
-
-      const netSalesTaxable = salesTaxable - saleReturnTaxable;
-      const netSalesVAT = salesVAT - saleReturnVAT;
-      const netPurchaseTaxable = purchaseTaxable - purchaseReturnTaxable;
-      const netPurchaseVAT = purchaseVAT - purchaseReturnVAT;
-      const netVATPayable = netSalesVAT - netPurchaseVAT;
-
-      return {
-        sections: [
-          { label: 'Taxable Sales', amount: salesTaxable, vat: salesVAT },
-          { label: 'Exempt Sales', amount: salesExempt, vat: 0 },
-          { label: 'Sales Return (CN)', amount: saleReturnTaxable, vat: saleReturnVAT },
-          { label: 'Net Taxable Sales', amount: netSalesTaxable, vat: netSalesVAT },
-          { label: 'Taxable Purchases', amount: purchaseTaxable, vat: purchaseVAT },
-          { label: 'Exempt Purchases', amount: purchaseExempt, vat: 0 },
-          { label: 'Purchase Return (DN)', amount: purchaseReturnTaxable, vat: purchaseReturnVAT },
-          { label: 'Net Taxable Purchases', amount: netPurchaseTaxable, vat: netPurchaseVAT },
-        ] as VATReturnRow[],
-        netVATPayable,
-      };
+      return calculateVATReturnSummary((data || []) as any);
     },
   });
 }

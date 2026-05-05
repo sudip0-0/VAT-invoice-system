@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { useInvoices, useTaxRates } from '@/hooks/useInvoices';
+import { useInvoices } from '@/hooks/useInvoices';
 import { useParties } from '@/hooks/useParties';
 import { useItems } from '@/hooks/useItems';
 import { useBusiness } from '@/contexts/BusinessContext';
@@ -16,16 +16,26 @@ import { type BSDate, todayBS, formatBSShort, getVATPeriod, adToBS } from '@/lib
 import { nepalTodayISO } from '@/lib/nepal-date';
 import BSDatePicker from '@/components/shared/BSDatePicker';
 import ItemCombobox from '@/components/invoices/ItemCombobox';
+import { STATUTORY_VAT_RATE, calculateVATLine, canIssueVATInvoice, getVATRateForTaxType, type LineTaxType } from '@/lib/vat-compliance';
+
+const LINE_TAX_TYPES: Array<{ value: LineTaxType; label: string }> = [
+  { value: 'vat_13', label: 'VAT 13%' },
+  { value: 'zero_rated', label: 'Zero-rated' },
+  { value: 'exempt', label: 'Exempt' },
+  { value: 'non_taxable', label: 'Non-taxable' },
+];
 
 interface LineItem {
   key: string;
   item_id: string | null;
+  hsn_code: string | null;
   name: string;
   unit: string;
   quantity: number;
   rate: number;
   discount_pct: number;
   discount_amt: number;
+  tax_type: LineTaxType;
   vat_rate: number;
   taxable_amount: number;
   vat_amount: number;
@@ -35,19 +45,17 @@ interface LineItem {
 
 function newLine(): LineItem {
   return {
-    key: crypto.randomUUID(), item_id: null, name: '', unit: 'PCS',
+    key: crypto.randomUUID(), item_id: null, hsn_code: null, name: '', unit: 'PCS',
     quantity: 1, rate: 0, discount_pct: 0, discount_amt: 0,
+    tax_type: 'non_taxable',
     vat_rate: 0, taxable_amount: 0, vat_amount: 0, total_amount: 0,
     is_custom: false,
   };
 }
 
 function calcLine(line: LineItem): LineItem {
-  const gross = line.quantity * line.rate;
-  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : 0;
-  const taxable = gross - discAmt;
-  const vat = taxable * (line.vat_rate / 100);
-  return { ...line, discount_amt: discAmt, taxable_amount: taxable, vat_amount: vat, total_amount: taxable + vat };
+  const totals = calculateVATLine(line);
+  return { ...line, ...totals };
 }
 
 export default function QuotationCreatePage() {
@@ -57,7 +65,6 @@ export default function QuotationCreatePage() {
   const { createInvoice } = useInvoices();
   const { data: parties = [] } = useParties();
   const { items: inventoryItems } = useItems();
-  const { data: taxRates = [] } = useTaxRates();
 
   const todayBs = todayBS();
   const todayAd = nepalTodayISO();
@@ -71,11 +78,6 @@ export default function QuotationCreatePage() {
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<LineItem[]>([newLine()]);
 
-  const vatRate = useMemo(() => {
-    const vat13 = taxRates.find((t) => t.type === 'vat_13');
-    return vat13?.rate ?? 13;
-  }, [taxRates]);
-
   const customers = useMemo(() => parties.filter((p) => p.type === 'customer' || p.type === 'both'), [parties]);
 
   const updateLine = useCallback((key: string, updates: Partial<LineItem>) => {
@@ -85,8 +87,8 @@ export default function QuotationCreatePage() {
   const selectItem = useCallback((key: string, itemId: string) => {
     const item = inventoryItems.find((i) => i.id === itemId);
     if (!item) return;
-    updateLine(key, { item_id: itemId, name: item.name, unit: item.unit, rate: item.sale_price, vat_rate: isVat ? vatRate : 0, is_custom: false });
-  }, [inventoryItems, isVat, vatRate, updateLine]);
+    updateLine(key, { item_id: itemId, hsn_code: item.hsn_code || null, name: item.name, unit: item.unit, rate: item.sale_price, tax_type: isVat ? 'vat_13' : 'non_taxable', vat_rate: isVat ? STATUTORY_VAT_RATE : 0, is_custom: false });
+  }, [inventoryItems, isVat, updateLine]);
 
   const addLine = () => setLines((prev) => [...prev, newLine()]);
   const removeLine = (key: string) => setLines((prev) => prev.length > 1 ? prev.filter((l) => l.key !== key) : prev);
@@ -100,13 +102,17 @@ export default function QuotationCreatePage() {
     return { subTotal, discountAmount, taxableAmount, vatAmount, totalAmount };
   }, [lines]);
 
-  const quotationNumber = `QTN-${String(business?.next_invoice_num || 1).padStart(4, '0')}`;
+  const quotationNumber = `QTN-${String(business?.next_quotation_num || 1).padStart(4, '0')}`;
   const issuedBs = formatBSShort(issuedDateBs);
   const dueBs = dueDateBs ? formatBSShort(dueDateBs) : null;
 
   const handleSave = async (status: 'draft' | 'issued') => {
     if (!partyId) { toast({ title: 'Select a customer', variant: 'destructive' }); return; }
     if (lines.every((l) => !l.name.trim())) { toast({ title: 'Add at least one item', variant: 'destructive' }); return; }
+    if (!canIssueVATInvoice(isVat, Boolean(business?.is_vat_registered))) {
+      toast({ title: 'VAT quotations require a VAT-registered business', variant: 'destructive' });
+      return;
+    }
 
     const validLines = lines.filter((l) => l.name.trim());
     const selectedParty = parties.find((p) => p.id === partyId);
@@ -135,8 +141,9 @@ export default function QuotationCreatePage() {
           notes: notes || null,
         },
         items: validLines.map((l) => ({
-          item_id: l.item_id, name: l.name, unit: l.unit, quantity: l.quantity, rate: l.rate,
+          item_id: l.item_id, hsn_code: l.hsn_code, name: l.name, unit: l.unit, quantity: l.quantity, rate: l.rate,
           discount_pct: l.discount_pct, discount_amt: l.discount_amt,
+          tax_type: l.tax_type,
           vat_rate: l.vat_rate, taxable_amount: l.taxable_amount, vat_amount: l.vat_amount, total_amount: l.total_amount,
         })),
       });
@@ -183,9 +190,12 @@ export default function QuotationCreatePage() {
           <label className="flex items-center gap-2 text-xs">
             <input type="checkbox" checked={isVat} onChange={(e) => {
               setIsVat(e.target.checked);
-              setLines((prev) => prev.map((l) => calcLine({ ...l, vat_rate: e.target.checked ? vatRate : 0 })));
+              setLines((prev) => prev.map((l) => {
+                const taxType = e.target.checked ? 'vat_13' : 'non_taxable';
+                return calcLine({ ...l, tax_type: taxType, vat_rate: getVATRateForTaxType(taxType) });
+              }));
             }} className="rounded" />
-            Include VAT (13%)
+            Include VAT ({STATUTORY_VAT_RATE}%)
           </label>
         )}
       </div>
@@ -202,6 +212,7 @@ export default function QuotationCreatePage() {
                 <th className="px-3 py-2 text-left font-medium text-muted-foreground w-16">Unit</th>
                 <th className="px-3 py-2 text-right font-medium text-muted-foreground w-24">Rate</th>
                 <th className="px-3 py-2 text-right font-medium text-muted-foreground w-16">Disc%</th>
+                {isVat && <th className="px-3 py-2 text-left font-medium text-muted-foreground w-36">Tax</th>}
                 {isVat && <th className="px-3 py-2 text-right font-medium text-muted-foreground w-20">VAT</th>}
                 <th className="px-3 py-2 text-right font-medium text-muted-foreground w-24">Total</th>
                 <th className="px-3 py-2 w-8"></th>
@@ -218,7 +229,7 @@ export default function QuotationCreatePage() {
                       displayName={line.name}
                       mode="quotation"
                       onSelect={(itemId) => selectItem(line.key, itemId)}
-                      onCustom={() => updateLine(line.key, { item_id: null, name: '', is_custom: true })}
+                      onCustom={() => updateLine(line.key, { item_id: null, hsn_code: null, name: '', is_custom: true })}
                     />
                     {line.is_custom && (
                       <Input value={line.name} onChange={(e) => updateLine(line.key, { name: e.target.value })} placeholder="Item name" className="h-7 text-xs mt-1" />
@@ -228,6 +239,19 @@ export default function QuotationCreatePage() {
                   <td className="px-3 py-2 text-muted-foreground">{line.unit}</td>
                   <td className="px-3 py-2"><Input type="number" min="0" step="0.01" value={line.rate} onChange={(e) => updateLine(line.key, { rate: Number(e.target.value) })} className="h-8 text-xs text-right w-24 border-0 bg-transparent shadow-none px-0" /></td>
                   <td className="px-3 py-2"><Input type="number" min="0" max="100" step="0.1" value={line.discount_pct} onChange={(e) => updateLine(line.key, { discount_pct: Number(e.target.value) })} className="h-8 text-xs text-right w-16 border-0 bg-transparent shadow-none px-0" /></td>
+                  {isVat && (
+                    <td className="px-3 py-2">
+                      <Select
+                        value={line.tax_type}
+                        onValueChange={(value: LineTaxType) => updateLine(line.key, { tax_type: value, vat_rate: getVATRateForTaxType(value) })}
+                      >
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {LINE_TAX_TYPES.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </td>
+                  )}
                   {isVat && <td className="px-3 py-2 text-right text-muted-foreground">{formatNPR(line.vat_amount, { showSymbol: false })}</td>}
                   <td className="px-3 py-2 text-right font-medium text-foreground">{formatNPR(line.total_amount, { showSymbol: false })}</td>
                   <td className="px-3 py-2"><Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeLine(line.key)}><Trash2 className="h-3 w-3" /></Button></td>
@@ -252,7 +276,7 @@ export default function QuotationCreatePage() {
           {isVat && (
             <>
               <div className="flex justify-between text-muted-foreground"><span>Taxable Amount</span><span>{formatNPR(totals.taxableAmount, { showSymbol: false })}</span></div>
-              <div className="flex justify-between text-muted-foreground"><span>VAT (13%)</span><span>{formatNPR(totals.vatAmount, { showSymbol: false })}</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>VAT ({STATUTORY_VAT_RATE}%)</span><span>{formatNPR(totals.vatAmount, { showSymbol: false })}</span></div>
             </>
           )}
           <div className="flex justify-between font-bold text-foreground border-t border-border pt-2"><span>Total</span><span>{formatNPR(totals.totalAmount)}</span></div>

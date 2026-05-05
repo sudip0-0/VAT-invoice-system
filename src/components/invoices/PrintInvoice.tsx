@@ -3,6 +3,7 @@ import { forwardRef } from "react";
 import { formatNPR } from "@/lib/nepal-format";
 import { amountInWords } from "@/lib/amount-in-words";
 import type { InvoiceDetail } from "@/hooks/useInvoices";
+import { STATUTORY_VAT_RATE } from "@/lib/vat-compliance";
 
 interface PrintInvoiceProps {
   invoice: InvoiceDetail;
@@ -39,11 +40,15 @@ const PrintInvoice = forwardRef<HTMLDivElement, PrintInvoiceProps>(
 
     const partyName = invoice.buyer_name || party?.name || "-";
     const partyAddress = invoice.buyer_address || `${party?.address || "-"}${party?.city ? `, ${party.city}` : ""}`;
-    const partyPan = party?.pan_number || invoice.buyer_pan || "-";
+    const partyPan = invoice.buyer_pan || party?.pan_number || "-";
     const remarkText = invoice.notes || (isSale ? "SALES" : "PURCHASE");
     const taxableAmount = invoice.is_vat_invoice ? invoice.taxable_amount : invoice.sub_total;
     const vatAmount = invoice.is_vat_invoice ? invoice.vat_amount : 0;
-    const taxExempted = invoice.is_vat_invoice ? 0 : invoice.sub_total;
+    const taxExempted = invoice.is_vat_invoice
+      ? lineItems
+        .filter((item) => item.tax_type === "exempt" || item.tax_type === "non_taxable")
+        .reduce((sum, item) => sum + Number(item.total_amount), 0)
+      : invoice.sub_total;
 
     return (
       <div ref={ref} className={`print-invoice print-invoice-${pageSize} relative bg-white text-black mx-auto`}>
@@ -123,11 +128,11 @@ const PrintInvoice = forwardRef<HTMLDivElement, PrintInvoiceProps>(
             <tbody>
               {/* Line items */}
               {lineItems.map((item, idx) => {
-                const amount = item.taxable_amount || (item.quantity * item.rate - item.discount_amt);
+                const amount = Number(item.total_amount) - Number(item.vat_amount);
                 return (
                   <tr key={item.id} className="invoice-item-row align-top">
                     <td className="border-r border-black px-1 py-1 text-center">{idx + 1}</td>
-                    <td className="border-r border-black px-1 py-1 text-left">-</td>
+                    <td className="border-r border-black px-1 py-1 text-left">{item.hsn_code || "-"}</td>
                     <td className="border-r border-black px-1 py-1">
                       <div>
                         <span className="font-medium">{item.name}</span>
@@ -220,7 +225,7 @@ const PrintInvoice = forwardRef<HTMLDivElement, PrintInvoiceProps>(
               {/* Row 5: VAT */}
               <tr>
                 <td colSpan={2} className="border-t border-r border-black px-2 py-1">
-                  Vat 13%
+                  Vat {STATUTORY_VAT_RATE}%
                 </td>
                 <td colSpan={2} className="border-t border-black px-2 py-1 text-right ">
                   {formatNPR(invoice.is_vat_invoice ? vatAmount : 0, { showSymbol: false })}

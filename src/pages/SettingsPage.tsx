@@ -81,6 +81,10 @@ function BusinessProfileTab() {
 
   const handleSave = async () => {
     if (!business) return;
+    if (form.is_vat_registered && !form.pan_number.trim()) {
+      toast({ title: 'PAN/VAT number is required for VAT-registered businesses', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     const { error } = await localDb
       .from('businesses')
@@ -250,7 +254,11 @@ function TaxRatesTab() {
             </div>
             <div>
               <Label className="text-xs">Type</Label>
-              <Select value={newType} onValueChange={setNewType}>
+              <Select value={newType} onValueChange={(value) => {
+                setNewType(value);
+                if (value === 'vat_13') setNewRate('13');
+                if (value === 'exempt' || value === 'zero_rated' || value === 'non_taxable') setNewRate('0');
+              }}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {TAX_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
@@ -259,7 +267,7 @@ function TaxRatesTab() {
             </div>
             <div>
               <Label className="text-xs">Rate (%)</Label>
-              <Input type="number" step="0.01" min="0" value={newRate} onChange={(e) => setNewRate(e.target.value)} className="h-9 text-sm" />
+              <Input type="number" step="0.01" min="0" value={newRate} onChange={(e) => setNewRate(e.target.value)} className="h-9 text-sm" disabled={newType === 'vat_13'} />
             </div>
           </div>
           <div className="flex gap-2 justify-end">

@@ -261,7 +261,11 @@ export function useTopSellingItems(dateFrom: string, dateTo: string, limit = 20)
 export interface VATAnnexRow {
   sn: number;
   invoice_number: string;
+  document_serial: number | null;
   date_bs: string;
+  fiscal_year: string;
+  vat_period: string;
+  taxpayer_pan: string;
   buyer_pan: string;
   buyer_name: string;
   total_sales: number;
@@ -280,7 +284,7 @@ export function useVATAnnex(dateFrom: string, dateTo: string, annexType: 'sales'
       const invoiceType = annexType === 'sales' ? 'sale' : 'purchase';
       const { data, error } = await localDb
         .from('invoices')
-        .select('invoice_number, issued_date_bs, is_vat_invoice, buyer_name, buyer_pan, total_amount, taxable_amount, vat_amount, customer:parties!invoices_customer_id_fkey(name, pan_number), vendor:parties!invoices_vendor_id_fkey(name, pan_number)')
+        .select('invoice_number, document_serial, issued_date_bs, fiscal_year, vat_period, is_vat_invoice, buyer_name, buyer_pan, total_amount, taxable_amount, vat_amount, invoice_items(tax_type, total_amount), customer:parties!invoices_customer_id_fkey(name, pan_number), vendor:parties!invoices_vendor_id_fkey(name, pan_number)')
         .eq('business_id', business!.id)
         .eq('type', invoiceType)
         .is('deleted_at', null)
@@ -296,12 +300,19 @@ export function useVATAnnex(dateFrom: string, dateTo: string, annexType: 'sales'
         const totalAmt = Number(inv.total_amount);
         const taxable = Number(inv.taxable_amount);
         const vat = Number(inv.vat_amount);
-        const exempt = inv.is_vat_invoice ? 0 : totalAmt;
+        const exemptLines = (inv.invoice_items || [])
+          .filter((item: any) => item.tax_type === 'exempt' || item.tax_type === 'non_taxable')
+          .reduce((sum: number, item: any) => sum + Number(item.total_amount), 0);
+        const exempt = inv.is_vat_invoice ? exemptLines : totalAmt;
 
         return {
           sn: idx + 1,
           invoice_number: inv.invoice_number,
+          document_serial: inv.document_serial,
           date_bs: inv.issued_date_bs,
+          fiscal_year: inv.fiscal_year || 'Accountant review',
+          vat_period: inv.vat_period || 'Accountant review',
+          taxpayer_pan: business?.pan_number || '',
           buyer_pan: pan,
           buyer_name: inv.buyer_name || party?.name || '—',
           total_sales: totalAmt,

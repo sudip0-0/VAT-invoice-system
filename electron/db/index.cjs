@@ -13,6 +13,8 @@ const QUERYABLE_TABLES = new Set([
   "parties",
   "invoices",
   "invoice_items",
+  "invoice_events",
+  "document_sequences",
   "payments",
   "expenses",
   "stock_movements",
@@ -115,6 +117,17 @@ function runSchemaMigrations() {
   addColumnIfMissing("invoices", "buyer_name", "TEXT");
   addColumnIfMissing("invoices", "buyer_phone", "TEXT");
   addColumnIfMissing("invoices", "buyer_address", "TEXT");
+  addColumnIfMissing("invoice_items", "hsn_code", "TEXT");
+  addColumnIfMissing("businesses", "next_sales_invoice_num", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing("businesses", "next_purchase_bill_num", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing("businesses", "next_quotation_num", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing("invoices", "print_count", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing("invoices", "last_printed_at", "TEXT");
+  addColumnIfMissing("invoices", "cancellation_reason", "TEXT");
+  addColumnIfMissing("invoices", "cancelled_at", "TEXT");
+  addColumnIfMissing("invoices", "fiscal_year", "TEXT");
+  addColumnIfMissing("invoices", "document_serial", "INTEGER");
+  addColumnIfMissing("invoice_items", "tax_type", "TEXT NOT NULL DEFAULT 'vat_13'");
 }
 
 function createResponse(data = null, error = null, count = null) {
@@ -337,6 +350,9 @@ function applyInsertDefaults(table, rawPayload) {
         fiscal_year_start: 4,
         invoice_prefix: "INV",
         next_invoice_num: 1,
+        next_sales_invoice_num: 1,
+        next_purchase_bill_num: 1,
+        next_quotation_num: 1,
         currency: "NPR",
         created_at: timestamp,
         updated_at: timestamp,
@@ -421,6 +437,8 @@ function applyInsertDefaults(table, rawPayload) {
         issued_date_bs: "",
         due_date_ad: null,
         due_date_bs: null,
+        fiscal_year: null,
+        document_serial: null,
         buyer_name: null,
         buyer_pan: null,
         buyer_phone: null,
@@ -434,6 +452,10 @@ function applyInsertDefaults(table, rawPayload) {
         total_amount: 0,
         paid_amount: 0,
         balance_due: 0,
+        print_count: 0,
+        last_printed_at: null,
+        cancellation_reason: null,
+        cancelled_at: null,
         notes: null,
         terms_conditions: null,
         created_at: timestamp,
@@ -446,7 +468,9 @@ function applyInsertDefaults(table, rawPayload) {
         ...base,
         item_id: null,
         tax_rate_id: null,
+        tax_type: "vat_13",
         description: null,
+        hsn_code: null,
         unit: "PCS",
         quantity: 0,
         rate: 0,
@@ -457,6 +481,22 @@ function applyInsertDefaults(table, rawPayload) {
         vat_amount: 0,
         total_amount: 0,
         sort_order: 0,
+        ...payload,
+      };
+    case "invoice_events":
+      return {
+        ...base,
+        user_id: null,
+        details: null,
+        created_at: timestamp,
+        ...payload,
+      };
+    case "document_sequences":
+      return {
+        ...base,
+        next_serial: 1,
+        created_at: timestamp,
+        updated_at: timestamp,
         ...payload,
       };
     case "payments":

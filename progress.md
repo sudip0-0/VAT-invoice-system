@@ -2,7 +2,7 @@
 
 This file tracks the current implementation state of the VAT Invoice System based on what is present in the repository today. It is a build tracker for contributors, not a roadmap or release log.
 
-**Snapshot Date:** April 25, 2026
+**Snapshot Date:** May 5, 2026
 
 ## Status Legend
 
@@ -16,12 +16,12 @@ This file tracks the current implementation state of the VAT Invoice System base
 | --- | --- | --- | --- |
 | Auth and business onboarding | Partial | Supabase auth flows, protected routes, and business setup are in place | Add coverage and close product gaps around business/user management |
 | Dashboard | Done | KPI cards, recent invoices, and low-stock alerts are implemented | Add coverage and validate behavior on larger datasets |
-| Invoices and bills | Done | Sales and purchase creation, editing, detail view, payments, cancel, print, and share are implemented | Add tests and resolve schema/UI gaps for unsupported invoice types |
+| Invoices and bills | Partial | Sales and purchase creation, detail view, payments, cancel, print, and share are implemented with VAT issue guards, HSN snapshots, line tax classification, and audit events | Add credit/debit note correction workflow and more lifecycle tests |
 | Quotations | Done | Quotation create/list/detail flow and conversion to invoice are implemented | Add lifecycle coverage and clarify quote-specific edge cases |
 | Inventory and stock movements | Done | Item CRUD, manual stock adjustment, automatic stock updates, and movement history are implemented | Add verification around stock-trigger correctness |
 | Parties and ledgers | Done | Party CRUD, party detail, ledger view, and CSV export are implemented | Add reconciliation-oriented coverage and edge-case checks |
 | Payments | Done | Invoice-linked and standalone payment flows with in/out views are implemented | Decide whether non-completed payment states need first-class UI support |
-| Reports | Partial | Broad reporting surface exists with CSV export and some charts | Harden simplified reports and reduce client-side reporting risk |
+| Reports | Partial | Broad reporting surface exists with CSV export, charts, VAT periods, VAT annex metadata, return deadline display, and VAT return document counts | Complete Schedule 10 fields and keep accountant-reviewed export formats |
 | Settings and profile | Partial | Business profile, tax rates, user profile, and password change are implemented | Add missing operational settings and business-management UI |
 | Infrastructure, docs, and tests | Partial | Vite, TypeScript, Supabase migrations, and basic docs exist | Replace placeholder tests and add operational docs and CI |
 
@@ -82,14 +82,14 @@ Implemented now:
 Main gaps or risks:
 
 - The schema includes additional invoice types such as returns and delivery challan, but the UI currently exposes sales, purchases, and quotations only.
-- Validation is mostly concentrated in the frontend flow, with limited automated regression protection.
-- Invoice numbering is business-driven, but there is no explicit conflict or concurrency hardening documented in the UI layer.
+- Issued VAT invoices are locked from direct edits, but the compliant credit/debit note correction workflow is still missing.
+- New documents use fiscal-year document sequences, but historical invoices may need accountant-reviewed sequence backfill before statutory reliance.
 - Shortcuts intentionally skip editable fields to avoid accidental navigation, but this still needs routine desktop QA in real data-entry workflows.
 
 Immediate next actions:
 
-- Add coverage for create, edit, cancel, and payment-state transitions.
-- Decide whether schema-only invoice types should be implemented in the UI or removed from active scope.
+- Add coverage for create, issue, cancel, print, and payment-state transitions.
+- Implement explicit credit/debit note workflows or document returns as out of scope.
 
 ## Quotations
 
@@ -191,12 +191,12 @@ Main gaps or risks:
 
 - Several reports are explicitly simplified in code comments or UI notes.
 - Reporting logic is mostly computed in the frontend from operational queries rather than a dedicated reporting backend.
-- The reports surface is broad, but there is no automated coverage for calculation accuracy or performance.
+- VAT reports include more statutory metadata, but the VAT return is still not a full Schedule 10 filing substitute.
 
 Immediate next actions:
 
 - Prioritize validation for VAT, P&L, trial balance, and balance sheet outputs.
-- Break out and test the highest-risk report calculations before expanding report scope further.
+- Complete Schedule 10 export fields such as voucher/payment details, import/capitalized purchases, refund reasons, and credit/debit-note counts after accountant review.
 
 ## Settings and Profile
 
@@ -231,7 +231,7 @@ Implemented now:
 
 Main gaps or risks:
 
-- Automated coverage remains very limited; the repo now has a basic Vitest example plus focused shortcut tests.
+- Automated coverage remains limited; the repo now has a basic Vitest example plus focused shortcut, VAT compliance, VAT return, BS calendar, and report-calculation tests.
 - No CI workflow is present in the repository.
 - There is no repo-level deployment runbook, local seed/demo-data flow, or operational troubleshooting guide.
 
@@ -243,7 +243,7 @@ Immediate next actions:
 
 ## Current Priorities / Next Steps
 
-- Expand basic test coverage (currently minimal and shortcut-focused) across auth, invoice flows, payments, stock updates, and high-risk reports.
+- Expand basic test coverage across auth, invoice flows, payments, stock updates, and high-risk reports.
 - Decide whether schema-defined but UI-missing features such as additional invoice/payment states are real near-term scope or should be trimmed.
 - Harden report accuracy, especially where the code already labels logic as simplified.
 - Add contributor/operations docs for CI, setup validation, and repeatable demo or seed data.

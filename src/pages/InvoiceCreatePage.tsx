@@ -5,8 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { useInvoices, useTaxRates } from '@/hooks/useInvoices';
+import { useInvoices } from '@/hooks/useInvoices';
 import { useParties } from '@/hooks/useParties';
 import { useItems } from '@/hooks/useItems';
 import { useBusiness } from '@/contexts/BusinessContext';
@@ -23,16 +24,26 @@ import {
   type CashCustomerDetails,
   emptyCashCustomerDetails,
 } from '@/lib/cash-customer';
+import { STATUTORY_VAT_RATE, calculateVATLine, canIssueVATInvoice, getVATRateForTaxType, hasRequiredBuyerPan, type LineTaxType } from '@/lib/vat-compliance';
+
+const LINE_TAX_TYPES: Array<{ value: LineTaxType; label: string }> = [
+  { value: 'vat_13', label: 'VAT 13%' },
+  { value: 'zero_rated', label: 'Zero-rated' },
+  { value: 'exempt', label: 'Exempt' },
+  { value: 'non_taxable', label: 'Non-taxable' },
+];
 
 interface LineItem {
   key: string;
   item_id: string | null;
+  hsn_code: string | null;
   name: string;
   unit: string;
   quantity: number;
   rate: number;
   discount_pct: number;
   discount_amt: number;
+  tax_type: LineTaxType;
   vat_rate: number;
   taxable_amount: number;
   vat_amount: number;
@@ -44,12 +55,14 @@ function newLine(): LineItem {
   return {
     key: crypto.randomUUID(),
     item_id: null,
+    hsn_code: null,
     name: '',
     unit: 'PCS',
     quantity: 1,
     rate: 0,
     discount_pct: 0,
     discount_amt: 0,
+    tax_type: 'non_taxable',
     vat_rate: 0,
     taxable_amount: 0,
     vat_amount: 0,
@@ -59,16 +72,10 @@ function newLine(): LineItem {
 }
 
 function calcLine(line: LineItem): LineItem {
-  const gross = line.quantity * line.rate;
-  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : 0;
-  const taxable = gross - discAmt;
-  const vat = taxable * (line.vat_rate / 100);
+  const totals = calculateVATLine(line);
   return {
     ...line,
-    discount_amt: discAmt,
-    taxable_amount: taxable,
-    vat_amount: vat,
-    total_amount: taxable + vat,
+    ...totals,
   };
 }
 
@@ -79,7 +86,6 @@ export default function InvoiceCreatePage() {
   const { createInvoice } = useInvoices();
   const { data: parties = [] } = useParties();
   const { items: inventoryItems } = useItems();
-  const { data: taxRates = [] } = useTaxRates();
 
   const todayBs = todayBS();
   const todayAd = nepalTodayISO();
@@ -96,11 +102,6 @@ export default function InvoiceCreatePage() {
   const [lines, setLines] = useState<LineItem[]>([newLine()]);
   const [receivedAmount, setReceivedAmount] = useState<number>(0);
 
-  const vatRate = useMemo(() => {
-    const vat13 = taxRates.find((t) => t.type === 'vat_13');
-    return vat13?.rate ?? 13;
-  }, [taxRates]);
-
   const filteredParties = useMemo(() => {
     return parties.filter((p) => p.type === 'customer' || p.type === 'both');
   }, [parties]);
@@ -116,13 +117,15 @@ export default function InvoiceCreatePage() {
     if (!item) return;
     updateLine(key, {
       item_id: itemId,
+      hsn_code: item.hsn_code || null,
       name: item.name,
       unit: item.unit,
       rate: item.sale_price,
-      vat_rate: isVat ? vatRate : 0,
+      tax_type: isVat ? 'vat_13' : 'non_taxable',
+      vat_rate: isVat ? STATUTORY_VAT_RATE : 0,
       is_custom: false,
     });
-  }, [inventoryItems, isVat, vatRate, updateLine]);
+  }, [inventoryItems, isVat, updateLine]);
 
   const addLine = () => setLines((prev) => [...prev, newLine()]);
   const removeLine = (key: string) => setLines((prev) => prev.length > 1 ? prev.filter((l) => l.key !== key) : prev);
@@ -136,7 +139,7 @@ export default function InvoiceCreatePage() {
     return { subTotal, discountAmount, taxableAmount, vatAmount, totalAmount };
   }, [lines]);
 
-  const invoiceNumber = `${business?.invoice_prefix || 'INV'}-${String(business?.next_invoice_num || 1).padStart(4, '0')}`;
+  const invoiceNumber = `${business?.invoice_prefix || 'INV'}-${String(business?.next_sales_invoice_num || business?.next_invoice_num || 1).padStart(4, '0')}`;
 
   const issuedBs = formatBSShort(issuedDateBs);
 
@@ -158,10 +161,19 @@ export default function InvoiceCreatePage() {
       toast({ title: 'Add at least one item', variant: 'destructive' });
       return;
     }
+    if (!canIssueVATInvoice(isVat, Boolean(business?.is_vat_registered))) {
+      toast({ title: 'VAT invoices require a VAT-registered business', variant: 'destructive' });
+      return;
+    }
 
     const validLines = lines.filter((l) => l.name.trim());
     const selectedParty = parties.find((p) => p.id === partyId);
     const isCashCustomer = partyId === CASH_CUSTOMER_ID;
+    const buyerPan = isCashCustomer ? cashCustomerDetails.panNumber || null : selectedParty?.pan_number || null;
+    if (!hasRequiredBuyerPan('sale', status, isVat, buyerPan)) {
+      toast({ title: 'Buyer PAN/VAT number is required to issue VAT sales invoices', variant: 'destructive' });
+      return;
+    }
 
     try {
       const newInvoiceId = await createInvoice.mutateAsync({
@@ -172,7 +184,7 @@ export default function InvoiceCreatePage() {
           customer_id: isCashCustomer ? null : partyId,
           vendor_id: null,
           buyer_name: isCashCustomer ? cashCustomerDetails.name || CASH_CUSTOMER_NAME : selectedParty?.name || null,
-          buyer_pan: isCashCustomer ? cashCustomerDetails.panNumber || null : selectedParty?.pan_number || null,
+          buyer_pan: buyerPan,
           buyer_phone: isCashCustomer ? cashCustomerDetails.phone || null : selectedParty?.phone || null,
           buyer_address: isCashCustomer ? cashCustomerDetails.address || null : [selectedParty?.address, selectedParty?.city].filter(Boolean).join(', ') || null,
           is_vat_invoice: isVat,
@@ -192,12 +204,14 @@ export default function InvoiceCreatePage() {
         },
         items: validLines.map((l) => ({
           item_id: l.item_id,
+          hsn_code: l.hsn_code,
           name: l.name,
           unit: l.unit,
           quantity: l.quantity,
           rate: l.rate,
           discount_pct: l.discount_pct,
           discount_amt: l.discount_amt,
+          tax_type: l.tax_type,
           vat_rate: l.vat_rate,
           taxable_amount: l.taxable_amount,
           vat_amount: l.vat_amount,
@@ -268,9 +282,12 @@ export default function InvoiceCreatePage() {
           <label className="flex items-center gap-2 text-xs">
             <input type="checkbox" checked={isVat} onChange={(e) => {
               setIsVat(e.target.checked);
-              setLines((prev) => prev.map((l) => calcLine({ ...l, vat_rate: e.target.checked ? vatRate : 0 })));
+              setLines((prev) => prev.map((l) => {
+                const taxType = e.target.checked ? 'vat_13' : 'non_taxable';
+                return calcLine({ ...l, tax_type: taxType, vat_rate: getVATRateForTaxType(taxType) });
+              }));
             }} className="rounded" />
-            VAT Invoice (13%)
+            VAT Invoice ({STATUTORY_VAT_RATE}%)
           </label>
         )}
       </div>
@@ -287,6 +304,7 @@ export default function InvoiceCreatePage() {
                 <th className="px-3 py-2 text-left font-medium text-muted-foreground w-16">Unit</th>
                 <th className="px-3 py-2 text-right font-medium text-muted-foreground w-24">Rate</th>
                 <th className="px-3 py-2 text-right font-medium text-muted-foreground w-16">Disc%</th>
+                {isVat && <th className="px-3 py-2 text-left font-medium text-muted-foreground w-28">Tax</th>}
                 {isVat && <th className="px-3 py-2 text-right font-medium text-muted-foreground w-20">VAT</th>}
                 <th className="px-3 py-2 text-right font-medium text-muted-foreground w-24">Total</th>
                 <th className="px-3 py-2 w-8"></th>
@@ -303,7 +321,7 @@ export default function InvoiceCreatePage() {
                       displayName={line.name}
                       mode="sale"
                       onSelect={(itemId) => selectItem(line.key, itemId)}
-                      onCustom={() => updateLine(line.key, { item_id: null, name: '', is_custom: true })}
+                      onCustom={() => updateLine(line.key, { item_id: null, hsn_code: null, name: '', is_custom: true })}
                     />
                     {line.is_custom && (
                       <Input
@@ -346,6 +364,19 @@ export default function InvoiceCreatePage() {
                       className="h-8 text-xs text-right w-16 border-0 bg-transparent shadow-none px-0"
                     />
                   </td>
+                  {isVat && (
+                    <td className="px-3 py-2">
+                      <Select
+                        value={line.tax_type}
+                        onValueChange={(value: LineTaxType) => updateLine(line.key, { tax_type: value, vat_rate: getVATRateForTaxType(value) })}
+                      >
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {LINE_TAX_TYPES.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </td>
+                  )}
                   {isVat && (
                     <td className="px-3 py-2 text-right text-muted-foreground">
                       {formatNPR(line.vat_amount, { showSymbol: false })}
@@ -395,7 +426,7 @@ export default function InvoiceCreatePage() {
                 <span>{formatNPR(totals.taxableAmount, { showSymbol: false })}</span>
               </div>
               <div className="flex justify-between text-muted-foreground">
-                <span>VAT (13%)</span>
+                <span>VAT ({STATUTORY_VAT_RATE}%)</span>
                 <span>{formatNPR(totals.vatAmount, { showSymbol: false })}</span>
               </div>
             </>

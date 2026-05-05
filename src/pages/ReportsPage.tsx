@@ -20,7 +20,7 @@ import {
 } from '@/hooks/useReportsExtra3';
 import { formatNPR } from '@/lib/nepal-format';
 import { nepalNow, formatLocalDate } from '@/lib/nepal-date';
-import { adToBS, formatBSShort } from '@/lib/bs-calendar';
+import { adToBS, formatBSShort, getVATReturnDeadline } from '@/lib/bs-calendar';
 import { useToast } from '@/hooks/use-toast';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
@@ -392,7 +392,7 @@ function VATReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
     if (!data) return { sales_taxable: 0, sales_vat: 0, purchase_taxable: 0, purchase_vat: 0, net_vat: 0 };
     return data.reduce((a, r) => ({ sales_taxable: a.sales_taxable + r.sales_taxable, sales_vat: a.sales_vat + r.sales_vat, purchase_taxable: a.purchase_taxable + r.purchase_taxable, purchase_vat: a.purchase_vat + r.purchase_vat, net_vat: a.net_vat + r.net_vat }), { sales_taxable: 0, sales_vat: 0, purchase_taxable: 0, purchase_vat: 0, net_vat: 0 });
   }, [data]);
-  const handleExport = () => { if (!data?.length) return; exportCSV(['VAT Period', 'Sales Taxable', 'Sales VAT', 'Purchase Taxable', 'Purchase VAT', 'Net VAT'], data.map(r => [r.period, String(r.sales_taxable), String(r.sales_vat), String(r.purchase_taxable), String(r.purchase_vat), String(r.net_vat)]), `vat-summary-${dateFrom}-${dateTo}.csv`); };
+  const handleExport = () => { if (!data?.length) return; exportCSV(['VAT Period', 'Return Due (BS)', 'Sales Taxable', 'Sales VAT', 'Purchase Taxable', 'Purchase VAT', 'Net VAT'], data.map(r => [r.period, getVATReturnDeadline(r.period), String(r.sales_taxable), String(r.sales_vat), String(r.purchase_taxable), String(r.purchase_vat), String(r.net_vat)]), `vat-summary-${dateFrom}-${dateTo}.csv`); };
 
   return (
     <div className="space-y-3">
@@ -400,6 +400,7 @@ function VATReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
       <ReportTable loading={isLoading} empty={!data?.length}>
         <thead><tr className="border-b border-border bg-muted/50">
           <th className="px-3 py-2 text-left font-medium text-muted-foreground">VAT Period</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Return Due (BS)</th>
           <th className="px-3 py-2 text-right font-medium text-muted-foreground">Sales Taxable</th>
           <th className="px-3 py-2 text-right font-medium text-muted-foreground">Sales VAT</th>
           <th className="px-3 py-2 text-right font-medium text-muted-foreground">Purchase Taxable</th>
@@ -409,6 +410,7 @@ function VATReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
         <tbody>{(data || []).map(r => (
           <tr key={r.period} className="border-b border-border last:border-0">
             <td className="px-3 py-2 font-medium text-foreground">{r.period}</td>
+            <td className="px-3 py-2 text-muted-foreground">{getVATReturnDeadline(r.period) || 'Accountant review'}</td>
             <td className="px-3 py-2 text-right text-foreground">{formatNPR(r.sales_taxable, { showSymbol: false })}</td>
             <td className="px-3 py-2 text-right text-foreground">{formatNPR(r.sales_vat, { showSymbol: false })}</td>
             <td className="px-3 py-2 text-right text-foreground">{formatNPR(r.purchase_taxable, { showSymbol: false })}</td>
@@ -417,7 +419,7 @@ function VATReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
           </tr>
         ))}</tbody>
         <tfoot><tr className="border-t-2 border-foreground/20 bg-muted/30">
-          <td className="px-3 py-2 font-semibold text-foreground">Total</td>
+          <td colSpan={2} className="px-3 py-2 font-semibold text-foreground">Total</td>
           <td className="px-3 py-2 text-right font-semibold text-foreground">{formatNPR(totals.sales_taxable, { showSymbol: false })}</td>
           <td className="px-3 py-2 text-right font-semibold text-foreground">{formatNPR(totals.sales_vat, { showSymbol: false })}</td>
           <td className="px-3 py-2 text-right font-semibold text-foreground">{formatNPR(totals.purchase_taxable, { showSymbol: false })}</td>
@@ -1269,7 +1271,21 @@ function VATReturnReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: strin
   if (!data) return <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">No data.</div>;
 
   return (
-    <div className="space-y-4 max-w-lg">
+    <div className="space-y-4 max-w-3xl">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        {[
+          ['Sales', data.counts.sales_invoice_count],
+          ['Purchases', data.counts.purchase_invoice_count],
+          ['Credit Notes', data.counts.credit_note_count],
+          ['Debit Notes', data.counts.debit_note_count],
+          ['Total Docs', data.counts.total_document_count],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-lg border border-border bg-card p-3">
+            <p className="text-[11px] text-muted-foreground">{label}</p>
+            <p className="text-lg font-semibold text-foreground">{value}</p>
+          </div>
+        ))}
+      </div>
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead><tr className="border-b border-border bg-muted/50">
@@ -1508,7 +1524,7 @@ function VATAnnexReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string
   const { data, isLoading } = useVATAnnex(dateFrom, dateTo, annexType);
   const annexLabel = annexType === 'sales' ? 'Annex 1 – Sales' : 'Annex 2 – Purchases';
   const partyLabel = annexType === 'sales' ? 'Buyer' : 'Supplier';
-  const handleExport = () => { if (!data?.rows.length) return; exportCSV(['SN', 'Invoice #', 'Date', `${partyLabel} PAN`, `${partyLabel} Name`, 'Total Amount', 'Exempt', 'Taxable', 'VAT'], data.rows.map(r => [String(r.sn), r.invoice_number, r.date_bs, r.buyer_pan, r.buyer_name, String(r.total_sales), String(r.exempt_sales), String(r.taxable_amount), String(r.vat_amount)]), `vat-annex-${annexType}-${dateFrom}-${dateTo}.csv`); };
+  const handleExport = () => { if (!data?.rows.length) return; exportCSV(['SN', 'Fiscal Year', 'VAT Period', 'Taxpayer PAN', 'Document Serial', 'Invoice #', 'Date', `${partyLabel} PAN`, `${partyLabel} Name`, 'Total Amount', 'Exempt', 'Taxable', 'VAT'], data.rows.map(r => [String(r.sn), r.fiscal_year, r.vat_period, r.taxpayer_pan, String(r.document_serial || ''), r.invoice_number, r.date_bs, r.buyer_pan, r.buyer_name, String(r.total_sales), String(r.exempt_sales), String(r.taxable_amount), String(r.vat_amount)]), `vat-annex-${annexType}-${dateFrom}-${dateTo}.csv`); };
 
   return (
     <div className="space-y-3">
@@ -1525,6 +1541,7 @@ function VATAnnexReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string
       <ReportTable loading={isLoading} empty={!data?.rows.length}>
         <thead><tr className="border-b border-border bg-muted/50">
           <th className="px-3 py-2 text-left font-medium text-muted-foreground">SN</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">VAT Period</th>
           <th className="px-3 py-2 text-left font-medium text-muted-foreground">Invoice #</th>
           <th className="px-3 py-2 text-left font-medium text-muted-foreground">Date</th>
           <th className="px-3 py-2 text-left font-medium text-muted-foreground">{partyLabel} PAN</th>
@@ -1537,6 +1554,7 @@ function VATAnnexReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string
         <tbody>{(data?.rows || []).map((r) => (
           <tr key={r.sn} className="border-b border-border last:border-0">
             <td className="px-3 py-2 text-muted-foreground">{r.sn}</td>
+            <td className="px-3 py-2 text-muted-foreground">{r.vat_period}</td>
             <td className="px-3 py-2 font-medium text-foreground">{r.invoice_number}</td>
             <td className="px-3 py-2 text-muted-foreground">{r.date_bs}</td>
             <td className="px-3 py-2 text-foreground">{r.buyer_pan || '—'}</td>
@@ -1548,7 +1566,7 @@ function VATAnnexReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string
           </tr>
         ))}</tbody>
         {data?.totals && <tfoot><tr className="border-t-2 border-foreground/20 bg-muted/30">
-          <td colSpan={5} className="px-3 py-2 font-semibold text-foreground">Total ({data.rows.length})</td>
+          <td colSpan={6} className="px-3 py-2 font-semibold text-foreground">Total ({data.rows.length})</td>
           <td className="px-3 py-2 text-right font-semibold text-foreground">{formatNPR(data.totals.total_sales, { showSymbol: false })}</td>
           <td className="px-3 py-2 text-right font-semibold text-muted-foreground">{formatNPR(data.totals.exempt_sales, { showSymbol: false })}</td>
           <td className="px-3 py-2 text-right font-semibold text-foreground">{formatNPR(data.totals.taxable_amount, { showSymbol: false })}</td>

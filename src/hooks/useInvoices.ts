@@ -1,7 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
+import { useAuth } from '@/contexts/AuthContext';
 import type { Tables, TablesInsert } from '@/integrations/local-db/types';
+import { canDirectlyEditInvoice, canIssueVATInvoice, hasRequiredBuyerPan } from '@/lib/vat-compliance';
+import { adToBS, getFiscalYear } from '@/lib/bs-calendar';
+import { parseLocalDate } from '@/lib/nepal-date';
 
 export type Invoice = Tables<'invoices'>;
 export type InvoiceItem = Tables<'invoice_items'>;
@@ -25,6 +29,11 @@ interface UseInvoiceListParams {
 }
 
 const DEFAULT_PAGE_SIZE = 50;
+const DOCUMENT_COUNTERS = {
+  sale: 'next_sales_invoice_num',
+  purchase: 'next_purchase_bill_num',
+  quotation: 'next_quotation_num',
+} as const;
 
 function getRange(page = 1, pageSize = DEFAULT_PAGE_SIZE) {
   const from = (page - 1) * pageSize;
@@ -44,35 +53,117 @@ function formatDocumentNumber(
   return fallback || `${invoicePrefix || 'INV'}-${serial}`;
 }
 
+function getDocumentCounterColumn(type: string | undefined) {
+  if (type === 'purchase') return DOCUMENT_COUNTERS.purchase;
+  if (type === 'quotation') return DOCUMENT_COUNTERS.quotation;
+  return DOCUMENT_COUNTERS.sale;
+}
+
+function parseDocumentSerial(invoiceNumber: string | null | undefined): number | null {
+  const match = invoiceNumber?.match(/(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
+async function getNextSerialAfterExistingFiscalDocuments(
+  businessId: string,
+  type: string | undefined,
+  fiscalYear: string
+) {
+  const { data, error } = await localDb
+    .from('invoices')
+    .select('invoice_number, issued_date_ad, fiscal_year, document_serial')
+    .eq('business_id', businessId)
+    .eq('type', (type || 'sale') as any)
+    .is('deleted_at', null);
+  if (error) throw error;
+
+  const maxSerial = (data || []).reduce((max, row) => {
+    const rowFiscalYear = row.fiscal_year || getFiscalYear(adToBS(parseLocalDate(row.issued_date_ad)));
+    if (rowFiscalYear !== fiscalYear) return max;
+    const serial = Number(row.document_serial || parseDocumentSerial(row.invoice_number) || 0);
+    return serial > max ? serial : max;
+  }, 0);
+
+  return maxSerial + 1;
+}
+
+async function findOrCreateDocumentSequence(
+  businessId: string,
+  type: string | undefined,
+  fiscalYear: string
+) {
+  const documentType = type || 'sale';
+  const { data: existing, error: existingErr } = await localDb
+    .from('document_sequences')
+    .select('*')
+    .eq('business_id', businessId)
+    .eq('document_type', documentType as any)
+    .eq('fiscal_year', fiscalYear)
+    .single();
+  if (existingErr) throw existingErr;
+  if (existing) return existing;
+
+  const nextSerial = await getNextSerialAfterExistingFiscalDocuments(businessId, type, fiscalYear);
+  const sequenceId = crypto.randomUUID();
+  const { data: inserted, error: insertErr } = await localDb
+    .from('document_sequences')
+    .insert({
+      id: sequenceId,
+      business_id: businessId,
+      document_type: documentType as any,
+      fiscal_year: fiscalYear,
+      next_serial: nextSerial,
+    })
+    .select('*')
+    .single();
+  if (insertErr) throw insertErr;
+  if (!inserted) throw new Error('Could not create document sequence');
+  return inserted;
+}
+
 const MAX_INVOICE_NUMBER_RESERVE_RETRIES = 10;
 
-async function reserveNextInvoiceNumber(businessId: string) {
+async function reserveNextInvoiceNumber(businessId: string, type: string | undefined, issuedDateAd: string | undefined) {
+  const counterColumn = getDocumentCounterColumn(type);
+  const fiscalYear = getFiscalYear(adToBS(parseLocalDate(issuedDateAd || new Date().toISOString().slice(0, 10))));
   for (let attempt = 0; attempt < MAX_INVOICE_NUMBER_RESERVE_RETRIES; attempt += 1) {
     const { data: currentBusiness, error: businessErr } = await localDb
       .from('businesses')
-      .select('invoice_prefix, next_invoice_num')
+      .select('invoice_prefix, next_invoice_num, next_sales_invoice_num, next_purchase_bill_num, next_quotation_num')
       .eq('id', businessId)
       .single();
     if (businessErr) throw businessErr;
     if (!currentBusiness) throw new Error('Business not found');
 
-    const reservedInvoiceNum = Number(currentBusiness.next_invoice_num || 1);
+    const currentSequence = await findOrCreateDocumentSequence(businessId, type, fiscalYear);
+    const currentCounter = Number(currentSequence.next_serial || 1);
+    const nextAfterExisting = await getNextSerialAfterExistingFiscalDocuments(businessId, type, fiscalYear);
+    const reservedInvoiceNum = Math.max(currentCounter, nextAfterExisting);
     const updatedNextInvoiceNum = reservedInvoiceNum + 1;
 
     const { data: reservedRow, error: reserveErr } = await localDb
-      .from('businesses')
-      .update({ next_invoice_num: updatedNextInvoiceNum })
-      .eq('id', businessId)
-      .eq('next_invoice_num', reservedInvoiceNum)
-      .select('next_invoice_num')
+      .from('document_sequences')
+      .update({ next_serial: updatedNextInvoiceNum, updated_at: new Date().toISOString() })
+      .eq('id', currentSequence.id)
+      .eq('next_serial', currentCounter)
+      .select('next_serial')
       .single();
     if (reserveErr) throw reserveErr;
 
     if (reservedRow) {
+      await localDb
+        .from('businesses')
+        .update({
+          [counterColumn]: updatedNextInvoiceNum,
+          ...(type === 'sale' ? { next_invoice_num: updatedNextInvoiceNum } : {}),
+        })
+        .eq('id', businessId);
+
       return {
         invoicePrefix: currentBusiness.invoice_prefix || undefined,
         reservedInvoiceNum,
         updatedNextInvoiceNum,
+        fiscalYear,
       };
     }
   }
@@ -80,8 +171,32 @@ async function reserveNextInvoiceNumber(businessId: string) {
   throw new Error('Could not reserve next invoice number. Please try again.');
 }
 
+async function logInvoiceEvent({
+  businessId,
+  invoiceId,
+  userId,
+  action,
+  details,
+}: {
+  businessId: string;
+  invoiceId: string;
+  userId?: string | null;
+  action: string;
+  details?: Record<string, unknown>;
+}) {
+  const { error } = await localDb.from('invoice_events').insert({
+    business_id: businessId,
+    invoice_id: invoiceId,
+    user_id: userId || null,
+    action,
+    details: details ? JSON.stringify(details) : null,
+  });
+  if (error) throw error;
+}
+
 export function useInvoices() {
-  const { business, setNextInvoiceNum } = useBusiness();
+  const { business, setNextDocumentNum } = useBusiness();
+  const { user } = useAuth();
   const qc = useQueryClient();
   const key = ['invoices', business?.id];
 
@@ -111,12 +226,19 @@ export function useInvoices() {
       const invoiceId = crypto.randomUUID();
       const desiredStatus = invoice.status || 'draft';
       const paidAmount = Number(invoice.paid_amount || 0);
+      if (!canIssueVATInvoice(Boolean(invoice.is_vat_invoice), Boolean(business?.is_vat_registered))) {
+        throw new Error('VAT invoices require a VAT-registered business');
+      }
+      if (!hasRequiredBuyerPan(invoice.type, desiredStatus, Boolean(invoice.is_vat_invoice), invoice.buyer_pan)) {
+        throw new Error('Buyer PAN/VAT number is required to issue VAT sales invoices');
+      }
       const {
         invoicePrefix,
         reservedInvoiceNum,
         updatedNextInvoiceNum,
-      } = await reserveNextInvoiceNumber(business!.id);
-      setNextInvoiceNum(updatedNextInvoiceNum);
+        fiscalYear,
+      } = await reserveNextInvoiceNumber(business!.id, invoice.type, invoice.issued_date_ad);
+      setNextDocumentNum(invoice.type, updatedNextInvoiceNum);
 
       const invoiceNumber = formatDocumentNumber(
         invoice.type,
@@ -124,7 +246,12 @@ export function useInvoices() {
         reservedInvoiceNum,
         invoice.invoice_number
       );
-      const invoicePayload = { ...invoice, invoice_number: invoiceNumber };
+      const invoicePayload = {
+        ...invoice,
+        invoice_number: invoiceNumber,
+        fiscal_year: fiscalYear,
+        document_serial: reservedInvoiceNum,
+      };
 
       // Determine status based on payment
       let finalStatus = desiredStatus;
@@ -161,6 +288,14 @@ export function useInvoices() {
           .eq('id', invoiceId);
         if (statusErr) throw statusErr;
       }
+
+      await logInvoiceEvent({
+        businessId: business!.id,
+        invoiceId,
+        userId: user?.id,
+        action: finalStatus === 'draft' ? 'draft_created' : 'issued',
+        details: { invoice_number: invoiceNumber, type: invoice.type, status: finalStatus },
+      });
 
       // Record payment if amount received
       if (paidAmount > 0 && desiredStatus !== 'draft') {
@@ -205,18 +340,34 @@ export function useInvoices() {
       items?: Omit<TablesInsert<'invoice_items'>, 'invoice_id'>[];
     }) => {
       const { business_id, ...invoiceUpdates } = invoice;
-      const { data: existingInvoice, error: invErr } = await localDb
+      const { data: existingInvoice, error: existingErr } = await localDb
+        .from('invoices')
+        .select('id, type, status, is_vat_invoice, buyer_pan')
+        .eq('id', id)
+        .eq('business_id', business!.id)
+        .single();
+      if (existingErr) throw existingErr;
+      if (!existingInvoice) throw new Error('Invoice not found');
+      if (!canDirectlyEditInvoice(existingInvoice)) {
+        throw new Error('Issued VAT invoices cannot be edited directly');
+      }
+      if (!canIssueVATInvoice(Boolean(invoiceUpdates.is_vat_invoice), Boolean(business?.is_vat_registered))) {
+        throw new Error('VAT invoices require a VAT-registered business');
+      }
+      const nextIsVatInvoice = invoiceUpdates.is_vat_invoice ?? existingInvoice.is_vat_invoice;
+      const nextBuyerPan = invoiceUpdates.buyer_pan ?? existingInvoice.buyer_pan;
+      if (!hasRequiredBuyerPan(invoiceUpdates.type || existingInvoice.type, invoiceUpdates.status || existingInvoice.status, Boolean(nextIsVatInvoice), nextBuyerPan)) {
+        throw new Error('Buyer PAN/VAT number is required to issue VAT sales invoices');
+      }
+
+      const { error: invErr } = await localDb
         .from('invoices')
         .update({ ...invoiceUpdates, updated_at: new Date().toISOString() })
         .eq('id', id)
-        .eq('business_id', business!.id)
-        .select('id')
-        .single();
+        .eq('business_id', business!.id);
       if (invErr) throw invErr;
 
       if (items !== undefined) {
-        if (!existingInvoice) throw new Error('Invoice not found');
-
         // Delete existing items and re-insert
         const { error: delErr } = await localDb
           .from('invoice_items')
@@ -236,24 +387,47 @@ export function useInvoices() {
         }
       }
 
+      await logInvoiceEvent({
+        businessId: business!.id,
+        invoiceId: id,
+        userId: user?.id,
+        action: 'updated',
+        details: { status: invoiceUpdates.status, type: invoiceUpdates.type, line_items_replaced: items !== undefined },
+      });
+
       return id;
     },
     onSuccess: (id) => {
       qc.invalidateQueries({ queryKey: key });
       qc.invalidateQueries({ queryKey: ['invoice', business?.id, id] });
+      qc.invalidateQueries({ queryKey: ['invoice_events', business?.id, id] });
     },
   });
 
   const cancelInvoice = useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+      const trimmedReason = reason.trim();
+      if (!trimmedReason) throw new Error('Cancellation reason is required');
       const { error } = await localDb
         .from('invoices')
-        .update({ status: 'cancelled' as any, updated_at: new Date().toISOString() })
+        .update({
+          status: 'cancelled' as any,
+          cancellation_reason: trimmedReason,
+          cancelled_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
         .eq('id', id)
         .eq('business_id', business!.id)
         .select('id')
         .single();
       if (error) throw error;
+      await logInvoiceEvent({
+        businessId: business!.id,
+        invoiceId: id,
+        userId: user?.id,
+        action: 'cancelled',
+        details: { reason: trimmedReason },
+      });
       return id;
     },
     onSuccess: (id) => {
@@ -261,10 +435,45 @@ export function useInvoices() {
       qc.invalidateQueries({ queryKey: ['invoice', business?.id, id] });
       qc.invalidateQueries({ queryKey: ['items', business?.id] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
+      qc.invalidateQueries({ queryKey: ['invoice_events', business?.id, id] });
     },
   });
 
-  return { invoices: query.data || [], isLoading: query.isLoading, createInvoice, updateInvoice, cancelInvoice };
+  const recordInvoicePrint = useMutation({
+    mutationFn: async (id: string) => {
+      const { data: invoice, error: fetchErr } = await localDb
+        .from('invoices')
+        .select('print_count')
+        .eq('id', id)
+        .eq('business_id', business!.id)
+        .single();
+      if (fetchErr) throw fetchErr;
+      if (!invoice) throw new Error('Invoice not found');
+
+      const { error } = await localDb
+        .from('invoices')
+        .update({
+          print_count: Number(invoice.print_count || 0) + 1,
+          last_printed_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .eq('business_id', business!.id);
+      if (error) throw error;
+      await logInvoiceEvent({
+        businessId: business!.id,
+        invoiceId: id,
+        userId: user?.id,
+        action: 'printed',
+        details: { print_count: Number(invoice.print_count || 0) + 1 },
+      });
+    },
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['invoice', business?.id, id] });
+      qc.invalidateQueries({ queryKey: ['invoice_events', business?.id, id] });
+    },
+  });
+
+  return { invoices: query.data || [], isLoading: query.isLoading, createInvoice, updateInvoice, cancelInvoice, recordInvoicePrint };
 }
 
 export function useInvoiceList({
@@ -323,6 +532,7 @@ export function useInvoiceDetail(id: string | undefined) {
 
 export function useInvoicePayments(invoiceId: string | undefined) {
   const { business } = useBusiness();
+  const { user } = useAuth();
   const qc = useQueryClient();
 
   const query = useQuery({
@@ -382,6 +592,14 @@ export function useInvoicePayments(invoiceId: string | undefined) {
             .eq('id', payment.invoice_id)
             .eq('business_id', business!.id);
         }
+
+        await logInvoiceEvent({
+          businessId: business!.id,
+          invoiceId: payment.invoice_id,
+          userId: user?.id,
+          action: 'payment_recorded',
+          details: { amount: payment.amount, method: payment.method, status: payment.status || 'completed' },
+        });
       }
 
       return data;
@@ -389,12 +607,32 @@ export function useInvoicePayments(invoiceId: string | undefined) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['payments', business?.id, invoiceId] });
       qc.invalidateQueries({ queryKey: ['invoice', business?.id, invoiceId] });
+      qc.invalidateQueries({ queryKey: ['invoice_events', business?.id, invoiceId] });
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
     },
   });
 
   return { payments: query.data || [], isLoading: query.isLoading, recordPayment };
+}
+
+export function useInvoiceEvents(invoiceId: string | undefined) {
+  const { business } = useBusiness();
+
+  return useQuery({
+    queryKey: ['invoice_events', business?.id, invoiceId],
+    enabled: !!invoiceId && !!business?.id,
+    queryFn: async () => {
+      const { data, error } = await localDb
+        .from('invoice_events')
+        .select('*')
+        .eq('invoice_id', invoiceId!)
+        .eq('business_id', business!.id)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as Tables<'invoice_events'>[];
+    },
+  });
 }
 
 export function useTaxRates() {
