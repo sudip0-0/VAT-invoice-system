@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useInvoices, useTaxRates } from '@/hooks/useInvoices';
 import { useParties } from '@/hooks/useParties';
@@ -15,6 +14,15 @@ import { formatNPR } from '@/lib/nepal-format';
 import { type BSDate, adToBS, bsToAD, formatBSShort, todayBS, getVATPeriod } from '@/lib/bs-calendar';
 import { nepalTodayISO } from '@/lib/nepal-date';
 import BSDatePicker from '@/components/shared/BSDatePicker';
+import ItemCombobox from '@/components/invoices/ItemCombobox';
+import PartyCombobox from '@/components/invoices/PartyCombobox';
+import CashCustomerDialog from '@/components/invoices/CashCustomerDialog';
+import {
+  CASH_CUSTOMER_ID,
+  CASH_CUSTOMER_NAME,
+  type CashCustomerDetails,
+  emptyCashCustomerDetails,
+} from '@/lib/cash-customer';
 
 interface LineItem {
   key: string;
@@ -29,6 +37,7 @@ interface LineItem {
   taxable_amount: number;
   vat_amount: number;
   total_amount: number;
+  is_custom: boolean;
 }
 
 function newLine(): LineItem {
@@ -45,12 +54,13 @@ function newLine(): LineItem {
     taxable_amount: 0,
     vat_amount: 0,
     total_amount: 0,
+    is_custom: false,
   };
 }
 
 function calcLine(line: LineItem): LineItem {
   const gross = line.quantity * line.rate;
-  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : line.discount_amt;
+  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : 0;
   const taxable = gross - discAmt;
   const vat = taxable * (line.vat_rate / 100);
   return {
@@ -74,8 +84,9 @@ export default function InvoiceCreatePage() {
   const todayBs = todayBS();
   const todayAd = nepalTodayISO();
 
-  const [invoiceType, setInvoiceType] = useState<'sale' | 'purchase'>('sale');
   const [partyId, setPartyId] = useState('');
+  const [cashCustomerDetails, setCashCustomerDetails] = useState<CashCustomerDetails>(emptyCashCustomerDetails());
+  const [cashCustomerOpen, setCashCustomerOpen] = useState(false);
   const [issuedDateBs, setIssuedDateBs] = useState<BSDate>(todayBs);
   const [issuedDateAd, setIssuedDateAd] = useState(todayAd);
   const [dueDateBs, setDueDateBs] = useState<BSDate | null>(null);
@@ -91,11 +102,8 @@ export default function InvoiceCreatePage() {
   }, [taxRates]);
 
   const filteredParties = useMemo(() => {
-    return parties.filter((p) => {
-      if (invoiceType === 'sale') return p.type === 'customer' || p.type === 'both';
-      return p.type === 'vendor' || p.type === 'both';
-    });
-  }, [parties, invoiceType]);
+    return parties.filter((p) => p.type === 'customer' || p.type === 'both');
+  }, [parties]);
 
   const updateLine = useCallback((key: string, updates: Partial<LineItem>) => {
     setLines((prev) =>
@@ -106,15 +114,15 @@ export default function InvoiceCreatePage() {
   const selectItem = useCallback((key: string, itemId: string) => {
     const item = inventoryItems.find((i) => i.id === itemId);
     if (!item) return;
-    const rate = invoiceType === 'sale' ? item.sale_price : (item.purchase_price ?? item.sale_price);
     updateLine(key, {
       item_id: itemId,
       name: item.name,
       unit: item.unit,
-      rate,
+      rate: item.sale_price,
       vat_rate: isVat ? vatRate : 0,
+      is_custom: false,
     });
-  }, [inventoryItems, invoiceType, isVat, vatRate, updateLine]);
+  }, [inventoryItems, isVat, vatRate, updateLine]);
 
   const addLine = () => setLines((prev) => [...prev, newLine()]);
   const removeLine = (key: string) => setLines((prev) => prev.length > 1 ? prev.filter((l) => l.key !== key) : prev);
@@ -134,6 +142,13 @@ export default function InvoiceCreatePage() {
 
   const dueBs = dueDateBs ? formatBSShort(dueDateBs) : null;
 
+  const handlePartySelect = (selectedPartyId: string) => {
+    setPartyId(selectedPartyId);
+    if (selectedPartyId === CASH_CUSTOMER_ID) {
+      setCashCustomerOpen(true);
+    }
+  };
+
   const handleSave = async (status: 'draft' | 'issued') => {
     if (!partyId) {
       toast({ title: 'Select a party', variant: 'destructive' });
@@ -146,16 +161,20 @@ export default function InvoiceCreatePage() {
 
     const validLines = lines.filter((l) => l.name.trim());
     const selectedParty = parties.find((p) => p.id === partyId);
+    const isCashCustomer = partyId === CASH_CUSTOMER_ID;
 
     try {
-      await createInvoice.mutateAsync({
+      const newInvoiceId = await createInvoice.mutateAsync({
         invoice: {
           invoice_number: invoiceNumber,
-          type: invoiceType,
+          type: 'sale',
           status,
-          customer_id: invoiceType === 'sale' ? partyId : null,
-          vendor_id: invoiceType === 'purchase' ? partyId : null,
-          buyer_pan: selectedParty?.pan_number || null,
+          customer_id: isCashCustomer ? null : partyId,
+          vendor_id: null,
+          buyer_name: isCashCustomer ? cashCustomerDetails.name || CASH_CUSTOMER_NAME : selectedParty?.name || null,
+          buyer_pan: isCashCustomer ? cashCustomerDetails.panNumber || null : selectedParty?.pan_number || null,
+          buyer_phone: isCashCustomer ? cashCustomerDetails.phone || null : selectedParty?.phone || null,
+          buyer_address: isCashCustomer ? cashCustomerDetails.address || null : [selectedParty?.address, selectedParty?.city].filter(Boolean).join(', ') || null,
           is_vat_invoice: isVat,
           issued_date_ad: issuedDateAd,
           issued_date_bs: issuedBs,
@@ -167,8 +186,8 @@ export default function InvoiceCreatePage() {
           taxable_amount: totals.taxableAmount,
           vat_amount: totals.vatAmount,
           total_amount: totals.totalAmount,
-          paid_amount: invoiceType === 'sale' ? receivedAmount : 0,
-          balance_due: invoiceType === 'sale' ? totals.totalAmount - receivedAmount : totals.totalAmount,
+          paid_amount: receivedAmount,
+          balance_due: totals.totalAmount - receivedAmount,
           notes: notes || null,
         },
         items: validLines.map((l) => ({
@@ -185,8 +204,12 @@ export default function InvoiceCreatePage() {
           total_amount: l.total_amount,
         })),
       });
-      toast({ title: `Invoice ${status === 'draft' ? 'saved as draft' : 'issued'}` });
-      navigate('/invoices');
+      toast({ title: `Sale ${status === 'draft' ? 'saved as draft' : 'issued'}` });
+      if (status === 'issued') {
+        navigate(`/invoices/${newInvoiceId}?print=1`);
+      } else {
+        navigate('/invoices');
+      }
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
@@ -199,33 +222,21 @@ export default function InvoiceCreatePage() {
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/invoices')}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-xl font-bold text-foreground">New Invoice</h1>
+        <h1 className="text-xl font-bold text-foreground">New Sale</h1>
         <span className="ml-auto text-sm font-mono text-muted-foreground">{invoiceNumber}</span>
       </div>
 
       {/* Top section */}
       <div className="rounded-lg border border-border bg-card p-4 space-y-4">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <Label className="text-xs">Type</Label>
-            <Select value={invoiceType} onValueChange={(v: 'sale' | 'purchase') => { setInvoiceType(v); setPartyId(''); }}>
-              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="sale">Sale</SelectItem>
-                <SelectItem value="purchase">Purchase</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-xs">{invoiceType === 'sale' ? 'Customer' : 'Vendor'} *</Label>
-            <Select value={partyId} onValueChange={setPartyId}>
-              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select..." /></SelectTrigger>
-              <SelectContent>
-                {filteredParties.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label className="text-xs">Customer *</Label>
+            <PartyCombobox
+              parties={filteredParties}
+              value={partyId}
+              mode="customer"
+              onSelect={handlePartySelect}
+            />
           </div>
           <div>
             <Label className="text-xs">Issue Date (BS)</Label>
@@ -286,27 +297,15 @@ export default function InvoiceCreatePage() {
                 <tr key={line.key} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
                   <td className="px-3 py-2">
-                    <Select
-                      value={line.item_id || ''}
-                      onValueChange={(v) => {
-                        if (v === '__custom') {
-                          updateLine(line.key, { item_id: null, name: '' });
-                        } else {
-                          selectItem(line.key, v);
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="h-8 text-xs border-0 bg-transparent shadow-none px-0">
-                        <SelectValue placeholder="Select item..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inventoryItems.map((it) => (
-                          <SelectItem key={it.id} value={it.id}>{it.name} {it.code ? `(${it.code})` : ''}</SelectItem>
-                        ))}
-                        <SelectItem value="__custom">Custom item...</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {line.item_id === null && line.name === '' && (
+                    <ItemCombobox
+                      items={inventoryItems}
+                      value={line.item_id}
+                      displayName={line.name}
+                      mode="sale"
+                      onSelect={(itemId) => selectItem(line.key, itemId)}
+                      onCustom={() => updateLine(line.key, { item_id: null, name: '', is_custom: true })}
+                    />
+                    {line.is_custom && (
                       <Input
                         value={line.name}
                         onChange={(e) => updateLine(line.key, { name: e.target.value })}
@@ -405,25 +404,21 @@ export default function InvoiceCreatePage() {
             <span>Total</span>
             <span>{formatNPR(totals.totalAmount)}</span>
           </div>
-          {invoiceType === 'sale' && (
-            <>
-              <div className="flex justify-between items-center text-muted-foreground">
-                <span>Received</span>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={receivedAmount}
-                  onChange={(e) => setReceivedAmount(Number(e.target.value))}
-                  className="h-7 text-xs text-right w-28"
-                />
-              </div>
-              <div className="flex justify-between text-sm font-medium text-foreground">
-                <span>Balance Due</span>
-                <span>{formatNPR(totals.totalAmount - receivedAmount)}</span>
-              </div>
-            </>
-          )}
+          <div className="flex justify-between items-center text-muted-foreground">
+            <span>Received</span>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={receivedAmount}
+              onChange={(e) => setReceivedAmount(Number(e.target.value))}
+              className="h-7 text-xs text-right w-28"
+            />
+          </div>
+          <div className="flex justify-between text-sm font-medium text-foreground">
+            <span>Balance Due</span>
+            <span>{formatNPR(totals.totalAmount - receivedAmount)}</span>
+          </div>
         </div>
       </div>
 
@@ -434,9 +429,16 @@ export default function InvoiceCreatePage() {
           Save Draft
         </Button>
         <Button size="sm" onClick={() => handleSave('issued')} disabled={createInvoice.isPending}>
-          Issue Invoice
+          Issue Sale
         </Button>
       </div>
+
+      <CashCustomerDialog
+        open={cashCustomerOpen}
+        value={cashCustomerDetails}
+        onOpenChange={setCashCustomerOpen}
+        onSave={setCashCustomerDetails}
+      />
     </div>
   );
 }

@@ -60,7 +60,10 @@ export interface InvoiceItemRow {
 export interface InvoiceRow {
   balance_due: number;
   business_id: string;
+  buyer_address: string | null;
+  buyer_name: string | null;
   buyer_pan: string | null;
+  buyer_phone: string | null;
   created_at: string;
   customer_id: string | null;
   deleted_at: string | null;
@@ -85,6 +88,22 @@ export interface InvoiceRow {
   vat_amount: number;
   vat_period: string | null;
   vendor_id: string | null;
+}
+
+export interface ExpenseRow {
+  amount: number;
+  business_id: string;
+  category: string;
+  created_at: string;
+  deleted_at: string | null;
+  description: string;
+  expense_date_ad: string;
+  expense_date_bs: string;
+  id: string;
+  notes: string | null;
+  payment_method: PaymentMethod;
+  reference: string | null;
+  updated_at: string;
 }
 
 export interface ItemCategoryRow {
@@ -195,6 +214,7 @@ export interface TaxRateRow {
 export interface TableRowMap {
   business_users: BusinessUserRow;
   businesses: BusinessRow;
+  expenses: ExpenseRow;
   invoice_items: InvoiceItemRow;
   invoices: InvoiceRow;
   item_categories: ItemCategoryRow;

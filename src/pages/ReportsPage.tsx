@@ -3,10 +3,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { Download, AlertTriangle, ChevronRight } from 'lucide-react';
+import { Download, Plus, Trash2, ChevronRight } from 'lucide-react';
 import {
   useSalesReport, useVATSummary, useProfitLoss, useBillWiseProfit,
-  useCashFlow, usePartyStatement, useSalePurchaseByParty, useStockSummary, useAllParties,
+  useCashFlow, usePartyStatement, useSalePurchaseByParty, useStockSummary, useAllParties, useExpenses,
 } from '@/hooks/useReports';
 import {
   useItemWiseSalesPurchase, useLowStockAlert, useDayBook, useCNDNRegister,
@@ -20,6 +20,8 @@ import {
 } from '@/hooks/useReportsExtra3';
 import { formatNPR } from '@/lib/nepal-format';
 import { nepalNow, formatLocalDate } from '@/lib/nepal-date';
+import { adToBS, formatBSShort } from '@/lib/bs-calendar';
+import { useToast } from '@/hooks/use-toast';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, Legend, Cell,
@@ -431,28 +433,29 @@ function VATReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
 function PnLReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
   const { data, isLoading } = useProfitLoss(dateFrom, dateTo);
 
-  if (isLoading) return <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">Loading…</div>;
+  if (isLoading) return <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">Loading...</div>;
   if (!data) return <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">No data.</div>;
 
   const rows = [
     { label: 'Total Sales Revenue', value: data.totalSales, bold: true },
     { label: 'Less: Cost of Goods Sold (COGS)', value: -data.totalCOGS },
     { label: 'Gross Profit', value: data.grossProfit, bold: true, highlight: true },
+    { label: 'Less: Operating Expenses', value: -data.totalExpenses },
+    { label: 'Net Profit', value: data.netProfit, bold: true, highlight: true },
     { label: 'Total Purchases', value: data.totalPurchases, info: true },
     { label: 'Sales Discount Given', value: data.totalSalesDiscount, info: true },
     { label: 'Sales VAT Collected', value: data.totalSalesVAT, info: true },
     { label: 'Purchase VAT Paid', value: data.totalPurchaseVAT, info: true },
-    { label: 'Net Profit', value: data.netProfit, bold: true, highlight: true },
   ];
 
   const chartData = [
     { name: 'Sales', value: data.totalSales },
     { name: 'COGS', value: data.totalCOGS },
-    { name: 'Gross Profit', value: Math.max(0, data.grossProfit) },
+    { name: 'Expenses', value: data.totalExpenses },
     { name: 'Net Profit', value: Math.max(0, data.netProfit) },
   ];
 
-  const barColors = ['hsl(var(--primary))', 'hsl(var(--destructive))', 'hsl(142, 71%, 45%)', 'hsl(142, 71%, 35%)'];
+  const barColors = ['hsl(var(--primary))', 'hsl(var(--destructive))', 'hsl(38, 92%, 50%)', 'hsl(142, 71%, 35%)'];
 
   return (
     <div className="space-y-4">
@@ -472,25 +475,139 @@ function PnLReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <div className="rounded-lg border border-border bg-card overflow-hidden max-w-lg">
-        <table className="w-full text-sm">
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className={`border-b border-border last:border-0 ${r.highlight ? 'bg-muted/30' : ''}`}>
-                <td className={`px-4 py-3 ${r.bold ? 'font-semibold' : ''} ${r.info ? 'text-muted-foreground pl-8' : 'text-foreground'}`}>{r.label}</td>
-                <td className={`px-4 py-3 text-right ${r.bold ? 'font-semibold' : ''} ${r.value < 0 ? 'text-destructive' : 'text-foreground'}`}>
-                  {formatNPR(Math.abs(r.value))}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          <table className="w-full text-sm">
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className={`border-b border-border last:border-0 ${r.highlight ? 'bg-muted/30' : ''}`}>
+                  <td className={`px-4 py-3 ${r.bold ? 'font-semibold' : ''} ${r.info ? 'text-muted-foreground pl-8' : 'text-foreground'}`}>{r.label}</td>
+                  <td className={`px-4 py-3 text-right ${r.bold ? 'font-semibold' : ''} ${r.value < 0 ? 'text-destructive' : 'text-foreground'}`}>
+                    {formatNPR(Math.abs(r.value))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ExpenseManager dateFrom={dateFrom} dateTo={dateTo} />
       </div>
     </div>
   );
 }
 
-// ───────── Bill-wise Profit ─────────
+function ExpenseManager({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
+  const { data: expenses = [], createExpense, deleteExpense } = useExpenses(dateFrom, dateTo);
+  const { toast } = useToast();
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({
+    expense_date_ad: dateTo,
+    category: 'General',
+    description: '',
+    amount: '',
+    payment_method: 'cash',
+    reference: '',
+  });
+
+  const set = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
+
+  const handleAddExpense = async () => {
+    const amount = Number(form.amount);
+    if (!form.description.trim() || !Number.isFinite(amount) || amount <= 0) {
+      toast({ title: 'Expense needs a description and positive amount', variant: 'destructive' });
+      return;
+    }
+
+    const bsDate = formatBSShort(adToBS(new Date(`${form.expense_date_ad}T00:00:00`)));
+    try {
+      await createExpense.mutateAsync({
+        category: form.category.trim() || 'General',
+        description: form.description.trim(),
+        amount,
+        expense_date_ad: form.expense_date_ad,
+        expense_date_bs: bsDate,
+        payment_method: form.payment_method as any,
+        reference: form.reference.trim() || null,
+      });
+      setForm({ expense_date_ad: dateTo, category: 'General', description: '', amount: '', payment_method: 'cash', reference: '' });
+      setShowForm(false);
+      toast({ title: 'Expense added' });
+    } catch (error) {
+      toast({ title: 'Could not add expense', description: error instanceof Error ? error.message : 'Please try again.', variant: 'destructive' });
+    }
+  };
+
+  const total = expenses.reduce((sum, expense) => sum + Number(expense.amount), 0);
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Operating Expenses</h3>
+          <p className="text-xs text-muted-foreground">Included in Net Profit for this period.</p>
+        </div>
+        <Button size="sm" variant="outline" className="gap-1 text-xs" onClick={() => setShowForm((value) => !value)}>
+          <Plus className="h-3.5 w-3.5" /> Add
+        </Button>
+      </div>
+
+      {showForm && (
+        <div className="grid gap-2 rounded-md border border-border bg-muted/20 p-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Date</Label>
+              <Input type="date" value={form.expense_date_ad} onChange={(e) => set('expense_date_ad', e.target.value)} className="h-8 text-xs" />
+            </div>
+            <div>
+              <Label className="text-xs">Amount</Label>
+              <Input type="number" min="0" step="0.01" value={form.amount} onChange={(e) => set('amount', e.target.value)} className="h-8 text-xs" />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Description</Label>
+            <Input value={form.description} onChange={(e) => set('description', e.target.value)} className="h-8 text-xs" placeholder="Rent, salary, fuel..." />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Category</Label>
+              <Input value={form.category} onChange={(e) => set('category', e.target.value)} className="h-8 text-xs" />
+            </div>
+            <div>
+              <Label className="text-xs">Reference</Label>
+              <Input value={form.reference} onChange={(e) => set('reference', e.target.value)} className="h-8 text-xs" />
+            </div>
+          </div>
+          <Button size="sm" className="text-xs" onClick={handleAddExpense} disabled={createExpense.isPending}>Save Expense</Button>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {expenses.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No expenses recorded for this period.</p>
+        ) : expenses.slice(0, 8).map((expense) => (
+          <div key={expense.id} className="flex items-start justify-between gap-2 rounded-md border border-border p-2 text-xs">
+            <div>
+              <p className="font-medium text-foreground">{expense.description}</p>
+              <p className="text-muted-foreground">{expense.category} - {expense.expense_date_bs}</p>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="font-semibold text-destructive">{formatNPR(Number(expense.amount), { showSymbol: false })}</span>
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => deleteExpense.mutate(expense.id)}>
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-between border-t border-border pt-2 text-sm font-semibold">
+        <span>Total Expenses</span>
+        <span className="text-destructive">{formatNPR(total)}</span>
+      </div>
+    </div>
+  );
+}
+
+// --------- Bill-wise Profit ---------
 function BillProfitReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
   const { data, isLoading } = useBillWiseProfit(dateFrom, dateTo);
   const handleExport = () => { if (!data?.rows.length) return; exportCSV(['Date', 'Invoice #', 'Party', 'Sale Amt', 'Cost', 'Profit', 'Margin %'], data.rows.map(r => [r.date_bs, r.invoice_number, r.party_name, String(r.sale_amount), String(r.cost_amount), String(r.profit), r.margin_pct.toFixed(1)]), `bill-profit-${dateFrom}-${dateTo}.csv`); };
@@ -1441,3 +1558,6 @@ function VATAnnexReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string
     </div>
   );
 }
+
+
+

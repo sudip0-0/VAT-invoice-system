@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { localDb } from '@/integrations/local-db/client';
 
 interface Business {
   id: string;
@@ -20,8 +20,9 @@ interface BusinessContextType {
   businesses: Business[];
   role: string | null;
   loading: boolean;
-  switchBusiness: (id: string) => void;
-  refetch: () => void;
+  switchBusiness: (id: string) => Promise<void>;
+  setNextInvoiceNum: (nextInvoiceNum: number) => void;
+  refetch: () => Promise<void>;
 }
 
 const BusinessContext = createContext<BusinessContextType | undefined>(undefined);
@@ -45,7 +46,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
 
     // Get user's business memberships
-    const { data: memberships } = await supabase
+    const { data: memberships } = await localDb
       .from('business_users')
       .select('business_id, role, is_active')
       .eq('user_id', user.id);
@@ -61,7 +62,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     }
 
     const bizIds = activeMemberships.map((m) => m.business_id);
-    const { data: bizzes } = await supabase
+    const { data: bizzes } = await localDb
       .from('businesses')
       .select('*')
       .in('id', bizIds)
@@ -71,7 +72,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     setBusinesses(bizList);
 
     // Get active business from profile
-    const { data: profile } = await supabase
+    const { data: profile } = await localDb
       .from('profiles')
       .select('active_business_id')
       .eq('user_id', user.id)
@@ -101,12 +102,29 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     const biz = businesses.find((b) => b.id === id);
     if (biz && user) {
       setBusiness(biz);
-      await supabase.from('profiles').update({ active_business_id: id }).eq('user_id', user.id);
+      const { data: membership } = await localDb
+        .from('business_users')
+        .select('role')
+        .eq('business_id', id)
+        .eq('user_id', user.id)
+        .single();
+      setRole(membership?.role || null);
+      await localDb.from('profiles').update({ active_business_id: id }).eq('user_id', user.id);
     }
   };
 
+  const setNextInvoiceNum = useCallback((nextInvoiceNum: number) => {
+    const activeBusinessId = business?.id;
+    if (!activeBusinessId) return;
+
+    setBusiness((prev) => (prev ? { ...prev, next_invoice_num: nextInvoiceNum } : prev));
+    setBusinesses((prev) =>
+      prev.map((biz) => (biz.id === activeBusinessId ? { ...biz, next_invoice_num: nextInvoiceNum } : biz))
+    );
+  }, [business?.id]);
+
   return (
-    <BusinessContext.Provider value={{ business, businesses, role, loading, switchBusiness, refetch: fetchBusinesses }}>
+    <BusinessContext.Provider value={{ business, businesses, role, loading, switchBusiness, setNextInvoiceNum, refetch: fetchBusinesses }}>
       {children}
     </BusinessContext.Provider>
   );

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { useBusiness } from '@/contexts/BusinessContext';
+import { localDb } from '@/integrations/local-db/client';
 
 
 const businessTypes = [
@@ -17,6 +18,7 @@ const businessTypes = [
 
 export default function BusinessSetupPage() {
   const { user } = useAuth();
+  const { refetch } = useBusiness();
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [type, setType] = useState('retail');
@@ -38,7 +40,7 @@ export default function BusinessSetupPage() {
       const businessId = crypto.randomUUID();
 
       // Create business (without .select() to avoid SELECT RLS check before business_users exists)
-      const { error: bizError } = await supabase
+      const { error: bizError } = await localDb
         .from('businesses')
         .insert({
           id: businessId,
@@ -54,7 +56,7 @@ export default function BusinessSetupPage() {
       if (bizError) throw bizError;
 
       // Add user as owner
-      const { error: buError } = await supabase
+      const { error: buError } = await localDb
         .from('business_users')
         .insert({
           business_id: businessId,
@@ -65,18 +67,19 @@ export default function BusinessSetupPage() {
       if (buError) throw buError;
 
       // Update profile with active business
-      await supabase
+      await localDb
         .from('profiles')
         .update({ active_business_id: businessId })
         .eq('user_id', user.id);
 
       // Create default tax rates
-      await supabase.from('tax_rates').insert([
+      await localDb.from('tax_rates').insert([
         { business_id: businessId, name: 'VAT 13%', type: 'vat_13' as any, rate: 13.0, is_default: true },
         { business_id: businessId, name: 'Exempt', type: 'exempt' as any, rate: 0, is_default: false },
         { business_id: businessId, name: 'Zero Rated', type: 'zero_rated' as any, rate: 0, is_default: false },
       ]);
 
+      await refetch();
       navigate('/');
     } catch (err: any) {
       setError(err.message || 'Failed to create business');

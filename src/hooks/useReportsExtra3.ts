@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
 
 // ── Party Report by Item ──
@@ -25,7 +25,7 @@ export function usePartyReportByItem(dateFrom: string, dateTo: string) {
     queryKey: ['report-party-by-item', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data: invoices, error } = await supabase
+      const { data: invoices, error } = await localDb
         .from('invoices')
         .select('type, customer:parties!invoices_customer_id_fkey(id, name, type), vendor:parties!invoices_vendor_id_fkey(id, name, type), invoice_items(item_id, name, unit, quantity, total_amount)')
         .eq('business_id', business!.id)
@@ -45,7 +45,7 @@ export function usePartyReportByItem(dateFrom: string, dateTo: string) {
       }
       const codeMap = new Map<string, string>();
       if (itemIds.size > 0) {
-        const { data: items } = await supabase.from('items').select('id, code').in('id', Array.from(itemIds));
+        const { data: items } = await localDb.from('items').select('id, code').in('id', Array.from(itemIds));
         for (const it of items || []) if (it.code) codeMap.set(it.id, it.code);
       }
 
@@ -106,7 +106,7 @@ export function useItemReportByParty(dateFrom: string, dateTo: string) {
     queryKey: ['report-item-by-party', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data: invoices, error } = await supabase
+      const { data: invoices, error } = await localDb
         .from('invoices')
         .select('type, customer:parties!invoices_customer_id_fkey(name, type), vendor:parties!invoices_vendor_id_fkey(name, type), invoice_items(item_id, name, unit, quantity, total_amount)')
         .eq('business_id', business!.id)
@@ -125,7 +125,7 @@ export function useItemReportByParty(dateFrom: string, dateTo: string) {
       }
       const codeMap = new Map<string, string>();
       if (itemIds.size > 0) {
-        const { data: items } = await supabase.from('items').select('id, code').in('id', Array.from(itemIds));
+        const { data: items } = await localDb.from('items').select('id, code').in('id', Array.from(itemIds));
         for (const it of items || []) if (it.code) codeMap.set(it.id, it.code);
       }
 
@@ -186,7 +186,7 @@ export function useItemWiseProfit(dateFrom: string, dateTo: string) {
     queryKey: ['report-item-profit', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data: invoices, error } = await supabase
+      const { data: invoices, error } = await localDb
         .from('invoices')
         .select('invoice_items(item_id, name, unit, quantity, total_amount)')
         .eq('business_id', business!.id)
@@ -215,7 +215,7 @@ export function useItemWiseProfit(dateFrom: string, dateTo: string) {
       const priceMap = new Map<string, number>();
       const codeMap = new Map<string, string>();
       if (itemIds.size > 0) {
-        const { data: items } = await supabase.from('items').select('id, code, purchase_price').in('id', Array.from(itemIds));
+        const { data: items } = await localDb.from('items').select('id, code, purchase_price').in('id', Array.from(itemIds));
         for (const it of items || []) {
           priceMap.set(it.id, Number(it.purchase_price || 0));
           if (it.code) codeMap.set(it.id, it.code);

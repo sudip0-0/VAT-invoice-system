@@ -14,6 +14,15 @@ import { useBusiness } from '@/contexts/BusinessContext';
 import { formatNPR } from '@/lib/nepal-format';
 import { type BSDate, adToBS, bsToAD, formatBSShort, getVATPeriod, parseBSShort } from '@/lib/bs-calendar';
 import BSDatePicker from '@/components/shared/BSDatePicker';
+import ItemCombobox from '@/components/invoices/ItemCombobox';
+import PartyCombobox from '@/components/invoices/PartyCombobox';
+import CashCustomerDialog from '@/components/invoices/CashCustomerDialog';
+import {
+  CASH_CUSTOMER_ID,
+  CASH_CUSTOMER_NAME,
+  type CashCustomerDetails,
+  emptyCashCustomerDetails,
+} from '@/lib/cash-customer';
 
 interface LineItem {
   key: string;
@@ -28,11 +37,12 @@ interface LineItem {
   taxable_amount: number;
   vat_amount: number;
   total_amount: number;
+  is_custom: boolean;
 }
 
 function calcLine(line: LineItem): LineItem {
   const gross = line.quantity * line.rate;
-  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : line.discount_amt;
+  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : 0;
   const taxable = gross - discAmt;
   const vat = taxable * (line.vat_rate / 100);
   return {
@@ -50,6 +60,7 @@ function newLine(): LineItem {
     item_id: null, name: '', unit: 'PCS', quantity: 1, rate: 0,
     discount_pct: 0, discount_amt: 0, vat_rate: 0,
     taxable_amount: 0, vat_amount: 0, total_amount: 0,
+    is_custom: false,
   };
 }
 
@@ -67,6 +78,8 @@ export default function InvoiceEditPage() {
   const [initialized, setInitialized] = useState(false);
   const [invoiceType, setInvoiceType] = useState<'sale' | 'purchase'>('sale');
   const [partyId, setPartyId] = useState('');
+  const [cashCustomerDetails, setCashCustomerDetails] = useState<CashCustomerDetails>(emptyCashCustomerDetails());
+  const [cashCustomerOpen, setCashCustomerOpen] = useState(false);
   const [issuedDateBs, setIssuedDateBs] = useState<BSDate | null>(null);
   const [issuedDateAd, setIssuedDateAd] = useState('');
   const [dueDateBs, setDueDateBs] = useState<BSDate | null>(null);
@@ -79,7 +92,13 @@ export default function InvoiceEditPage() {
   useEffect(() => {
     if (invoice && !initialized) {
       setInvoiceType(invoice.type as 'sale' | 'purchase');
-      setPartyId(invoice.customer_id || invoice.vendor_id || '');
+      setPartyId(invoice.type === 'sale' && !invoice.customer_id ? CASH_CUSTOMER_ID : invoice.customer_id || invoice.vendor_id || '');
+      setCashCustomerDetails({
+        name: invoice.buyer_name || '',
+        panNumber: invoice.buyer_pan || '',
+        phone: invoice.buyer_phone || '',
+        address: invoice.buyer_address || '',
+      });
       const parsedIssuedBs = parseBSShort(invoice.issued_date_bs);
       if (parsedIssuedBs) setIssuedDateBs(parsedIssuedBs);
       setIssuedDateAd(invoice.issued_date_ad ? new Date(invoice.issued_date_ad).toISOString().slice(0, 10) : '');
@@ -104,6 +123,7 @@ export default function InvoiceEditPage() {
           taxable_amount: Number(item.taxable_amount),
           vat_amount: Number(item.vat_amount),
           total_amount: Number(item.total_amount),
+          is_custom: !item.item_id,
         }));
       setLines(existingLines.length > 0 ? existingLines : [newLine()]);
       setInitialized(true);
@@ -130,7 +150,7 @@ export default function InvoiceEditPage() {
     const item = inventoryItems.find((i) => i.id === itemId);
     if (!item) return;
     const rate = invoiceType === 'sale' ? item.sale_price : (item.purchase_price ?? item.sale_price);
-    updateLine(key, { item_id: itemId, name: item.name, unit: item.unit, rate, vat_rate: isVat ? vatRate : 0 });
+    updateLine(key, { item_id: itemId, name: item.name, unit: item.unit, rate, vat_rate: isVat ? vatRate : 0, is_custom: false });
   }, [inventoryItems, invoiceType, isVat, vatRate, updateLine]);
 
   const addLine = () => setLines((prev) => [...prev, newLine()]);
@@ -149,12 +169,20 @@ export default function InvoiceEditPage() {
 
   const dueBs = dueDateBs ? formatBSShort(dueDateBs) : null;
 
+  const handlePartySelect = (selectedPartyId: string) => {
+    setPartyId(selectedPartyId);
+    if (selectedPartyId === CASH_CUSTOMER_ID) {
+      setCashCustomerOpen(true);
+    }
+  };
+
   const handleSave = async (status: 'draft' | 'issued') => {
     if (!partyId) { toast({ title: 'Select a party', variant: 'destructive' }); return; }
     if (lines.every((l) => !l.name.trim())) { toast({ title: 'Add at least one item', variant: 'destructive' }); return; }
 
     const validLines = lines.filter((l) => l.name.trim());
     const selectedParty = parties.find((p) => p.id === partyId);
+    const isCashCustomer = invoiceType === 'sale' && partyId === CASH_CUSTOMER_ID;
     const paidAmount = Number(invoice?.paid_amount || 0);
     const newBalance = totals.totalAmount - paidAmount;
 
@@ -164,9 +192,12 @@ export default function InvoiceEditPage() {
         invoice: {
           type: invoiceType,
           status,
-          customer_id: invoiceType === 'sale' ? partyId : null,
+          customer_id: invoiceType === 'sale' && !isCashCustomer ? partyId : null,
           vendor_id: invoiceType === 'purchase' ? partyId : null,
-          buyer_pan: selectedParty?.pan_number || null,
+          buyer_name: isCashCustomer ? cashCustomerDetails.name || CASH_CUSTOMER_NAME : selectedParty?.name || null,
+          buyer_pan: isCashCustomer ? cashCustomerDetails.panNumber || null : selectedParty?.pan_number || null,
+          buyer_phone: isCashCustomer ? cashCustomerDetails.phone || null : selectedParty?.phone || null,
+          buyer_address: isCashCustomer ? cashCustomerDetails.address || null : [selectedParty?.address, selectedParty?.city].filter(Boolean).join(', ') || null,
           is_vat_invoice: isVat,
           issued_date_ad: issuedDateAd,
           issued_date_bs: issuedBs,
@@ -196,7 +227,11 @@ export default function InvoiceEditPage() {
         })),
       });
       toast({ title: `Invoice updated` });
-      navigate(`/invoices/${id}`);
+      if (status === 'issued' && invoiceType === 'sale') {
+        navigate(`/invoices/${id}?print=1`);
+      } else {
+        navigate(`/invoices/${id}`);
+      }
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
@@ -233,14 +268,12 @@ export default function InvoiceEditPage() {
           </div>
           <div>
             <Label className="text-xs">{invoiceType === 'sale' ? 'Customer' : 'Vendor'} *</Label>
-            <Select value={partyId} onValueChange={setPartyId}>
-              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select..." /></SelectTrigger>
-              <SelectContent>
-                {filteredParties.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <PartyCombobox
+              parties={filteredParties}
+              value={partyId}
+              mode={invoiceType === 'sale' ? 'customer' : 'vendor'}
+              onSelect={handlePartySelect}
+            />
           </div>
           <div>
             <Label className="text-xs">Issue Date (BS)</Label>
@@ -301,24 +334,15 @@ export default function InvoiceEditPage() {
                 <tr key={line.key} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
                   <td className="px-3 py-2">
-                    <Select
-                      value={line.item_id || ''}
-                      onValueChange={(v) => {
-                        if (v === '__custom') updateLine(line.key, { item_id: null, name: '' });
-                        else selectItem(line.key, v);
-                      }}
-                    >
-                      <SelectTrigger className="h-8 text-xs border-0 bg-transparent shadow-none px-0">
-                        <SelectValue placeholder={line.name || "Select item..."} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inventoryItems.map((it) => (
-                          <SelectItem key={it.id} value={it.id}>{it.name} {it.code ? `(${it.code})` : ''}</SelectItem>
-                        ))}
-                        <SelectItem value="__custom">Custom item...</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {line.item_id === null && !line.name && (
+                    <ItemCombobox
+                      items={inventoryItems}
+                      value={line.item_id}
+                      displayName={line.name}
+                      mode={invoiceType === 'purchase' ? 'purchase' : 'sale'}
+                      onSelect={(itemId) => selectItem(line.key, itemId)}
+                      onCustom={() => updateLine(line.key, { item_id: null, name: '', is_custom: true })}
+                    />
+                    {line.is_custom && (
                       <Input value={line.name} onChange={(e) => updateLine(line.key, { name: e.target.value })} placeholder="Item name" className="h-7 text-xs mt-1" />
                     )}
                   </td>
@@ -403,6 +427,13 @@ export default function InvoiceEditPage() {
           Save & Issue
         </Button>
       </div>
+
+      <CashCustomerDialog
+        open={cashCustomerOpen}
+        value={cashCustomerDetails}
+        onOpenChange={setCashCustomerOpen}
+        onSave={setCashCustomerDetails}
+      />
     </div>
   );
 }

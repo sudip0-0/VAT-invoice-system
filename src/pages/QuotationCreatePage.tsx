@@ -15,6 +15,7 @@ import { formatNPR } from '@/lib/nepal-format';
 import { type BSDate, todayBS, formatBSShort, getVATPeriod, adToBS } from '@/lib/bs-calendar';
 import { nepalTodayISO } from '@/lib/nepal-date';
 import BSDatePicker from '@/components/shared/BSDatePicker';
+import ItemCombobox from '@/components/invoices/ItemCombobox';
 
 interface LineItem {
   key: string;
@@ -29,6 +30,7 @@ interface LineItem {
   taxable_amount: number;
   vat_amount: number;
   total_amount: number;
+  is_custom: boolean;
 }
 
 function newLine(): LineItem {
@@ -36,12 +38,13 @@ function newLine(): LineItem {
     key: crypto.randomUUID(), item_id: null, name: '', unit: 'PCS',
     quantity: 1, rate: 0, discount_pct: 0, discount_amt: 0,
     vat_rate: 0, taxable_amount: 0, vat_amount: 0, total_amount: 0,
+    is_custom: false,
   };
 }
 
 function calcLine(line: LineItem): LineItem {
   const gross = line.quantity * line.rate;
-  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : line.discount_amt;
+  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : 0;
   const taxable = gross - discAmt;
   const vat = taxable * (line.vat_rate / 100);
   return { ...line, discount_amt: discAmt, taxable_amount: taxable, vat_amount: vat, total_amount: taxable + vat };
@@ -82,7 +85,7 @@ export default function QuotationCreatePage() {
   const selectItem = useCallback((key: string, itemId: string) => {
     const item = inventoryItems.find((i) => i.id === itemId);
     if (!item) return;
-    updateLine(key, { item_id: itemId, name: item.name, unit: item.unit, rate: item.sale_price, vat_rate: isVat ? vatRate : 0 });
+    updateLine(key, { item_id: itemId, name: item.name, unit: item.unit, rate: item.sale_price, vat_rate: isVat ? vatRate : 0, is_custom: false });
   }, [inventoryItems, isVat, vatRate, updateLine]);
 
   const addLine = () => setLines((prev) => [...prev, newLine()]);
@@ -209,14 +212,15 @@ export default function QuotationCreatePage() {
                 <tr key={line.key} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
                   <td className="px-3 py-2">
-                    <Select value={line.item_id || ''} onValueChange={(v) => { v === '__custom' ? updateLine(line.key, { item_id: null, name: '' }) : selectItem(line.key, v); }}>
-                      <SelectTrigger className="h-8 text-xs border-0 bg-transparent shadow-none px-0"><SelectValue placeholder="Select item..." /></SelectTrigger>
-                      <SelectContent>
-                        {inventoryItems.map((it) => <SelectItem key={it.id} value={it.id}>{it.name} {it.code ? `(${it.code})` : ''}</SelectItem>)}
-                        <SelectItem value="__custom">Custom item...</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {line.item_id === null && line.name === '' && (
+                    <ItemCombobox
+                      items={inventoryItems}
+                      value={line.item_id}
+                      displayName={line.name}
+                      mode="quotation"
+                      onSelect={(itemId) => selectItem(line.key, itemId)}
+                      onCustom={() => updateLine(line.key, { item_id: null, name: '', is_custom: true })}
+                    />
+                    {line.is_custom && (
                       <Input value={line.name} onChange={(e) => updateLine(line.key, { name: e.target.value })} placeholder="Item name" className="h-7 text-xs mt-1" />
                     )}
                   </td>

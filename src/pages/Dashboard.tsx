@@ -69,7 +69,7 @@ export default function Dashboard() {
                 <div key={inv.id} className="flex items-center justify-between text-xs">
                   <div>
                     <p className="font-medium text-foreground">
-                      {inv.customer?.name || inv.vendor?.name || '—'}
+                      {inv.buyer_name || inv.customer?.name || inv.vendor?.name || '—'}
                     </p>
                     <p className="text-muted-foreground">{inv.invoice_number}</p>
                   </div>

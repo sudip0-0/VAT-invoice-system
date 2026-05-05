@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
 
 // ── Trial Balance ──
@@ -18,18 +18,23 @@ export function useTrialBalance(dateFrom: string, dateTo: string) {
     queryKey: ['report-trial-balance', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const [{ data: invoices, error: iErr }, { data: payments, error: pErr }] = await Promise.all([
-        supabase.from('invoices')
+      const [{ data: invoices, error: iErr }, { data: payments, error: pErr }, { data: expenses, error: eErr }] = await Promise.all([
+        localDb.from('invoices')
           .select('type, total_amount, vat_amount, discount_amount')
           .eq('business_id', business!.id).is('deleted_at', null).neq('status', 'cancelled')
           .gte('issued_date_ad', dateFrom).lte('issued_date_ad', dateTo),
-        supabase.from('payments')
+        localDb.from('payments')
           .select('amount, invoice:invoices(type)')
           .eq('business_id', business!.id).eq('status', 'completed')
           .gte('payment_date_ad', dateFrom).lte('payment_date_ad', dateTo),
+        localDb.from('expenses')
+          .select('amount')
+          .eq('business_id', business!.id).is('deleted_at', null)
+          .gte('expense_date_ad', dateFrom).lte('expense_date_ad', dateTo),
       ]);
       if (iErr) throw iErr;
       if (pErr) throw pErr;
+      if (eErr) throw eErr;
 
       let salesRevenue = 0, purchaseExpense = 0, salesVAT = 0, purchaseVAT = 0;
       let salesDiscount = 0, saleReturnAmt = 0, purchaseReturnAmt = 0;
@@ -56,6 +61,7 @@ export function useTrialBalance(dateFrom: string, dateTo: string) {
         if (isSale) cashReceived += Number(p.amount);
         else cashPaid += Number(p.amount);
       }
+      const operatingExpenses = (expenses || []).reduce((sum, expense) => sum + Number(expense.amount), 0);
 
       // Build trial balance rows
       const rows: TrialBalanceRow[] = ([
@@ -66,6 +72,7 @@ export function useTrialBalance(dateFrom: string, dateTo: string) {
         // Expenses (debit balances)
         { account_name: 'Purchases', type: 'expense' as const, debit: purchaseExpense, credit: 0 },
         { account_name: 'Cash & Bank (Paid)', type: 'expense' as const, debit: cashPaid, credit: 0 },
+        { account_name: 'Operating Expenses', type: 'expense' as const, debit: operatingExpenses, credit: 0 },
         { account_name: 'Sales Discount', type: 'expense' as const, debit: salesDiscount, credit: 0 },
         // Income (credit balances)
         { account_name: 'Sales Revenue', type: 'income' as const, debit: 0, credit: salesRevenue },
@@ -99,22 +106,27 @@ export function useBalanceSheetSummary(dateTo: string) {
     queryKey: ['report-balance-sheet', business?.id, dateTo],
     enabled: !!business?.id && !!dateTo,
     queryFn: async () => {
-      const [{ data: invoices, error: iErr }, { data: payments, error: pErr }, { data: items, error: itErr }] = await Promise.all([
-        supabase.from('invoices')
+      const [{ data: invoices, error: iErr }, { data: payments, error: pErr }, { data: items, error: itErr }, { data: expenses, error: eErr }] = await Promise.all([
+        localDb.from('invoices')
           .select('type, total_amount, paid_amount, balance_due, vat_amount')
           .eq('business_id', business!.id).is('deleted_at', null).neq('status', 'cancelled')
           .lte('issued_date_ad', dateTo),
-        supabase.from('payments')
+        localDb.from('payments')
           .select('amount, invoice:invoices(type)')
           .eq('business_id', business!.id).eq('status', 'completed')
           .lte('payment_date_ad', dateTo),
-        supabase.from('items')
+        localDb.from('items')
           .select('current_stock, purchase_price')
           .eq('business_id', business!.id).eq('type', 'product').eq('is_active', true).is('deleted_at', null),
+        localDb.from('expenses')
+          .select('amount')
+          .eq('business_id', business!.id).is('deleted_at', null)
+          .lte('expense_date_ad', dateTo),
       ]);
       if (iErr) throw iErr;
       if (pErr) throw pErr;
       if (itErr) throw itErr;
+      if (eErr) throw eErr;
 
       // Inventory valuation
       let inventoryValue = 0;
@@ -168,8 +180,9 @@ export function useBalanceSheetSummary(dateTo: string) {
       liabilities.total = liabilities.items.reduce((a, i) => a + i.amount, 0);
 
       const equity = assets.total - liabilities.total;
+      const retainedEarnings = equity - (expenses || []).reduce((sum, expense) => sum + Number(expense.amount), 0);
 
-      return { assets, liabilities, equity };
+      return { assets, liabilities, equity: retainedEarnings };
     },
   });
 }
@@ -192,7 +205,7 @@ export function useTopSellingItems(dateFrom: string, dateTo: string, limit = 20)
     queryKey: ['report-top-selling', business?.id, dateFrom, dateTo, limit],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data: invoices, error } = await supabase
+      const { data: invoices, error } = await localDb
         .from('invoices')
         .select('invoice_items(item_id, name, unit, quantity, total_amount)')
         .eq('business_id', business!.id)
@@ -219,7 +232,7 @@ export function useTopSellingItems(dateFrom: string, dateTo: string, limit = 20)
 
       let codeMap = new Map<string, string>();
       if (itemIds.size > 0) {
-        const { data: items } = await supabase.from('items').select('id, code').in('id', Array.from(itemIds));
+        const { data: items } = await localDb.from('items').select('id, code').in('id', Array.from(itemIds));
         for (const it of items || []) if (it.code) codeMap.set(it.id, it.code);
       }
 
@@ -265,9 +278,9 @@ export function useVATAnnex(dateFrom: string, dateTo: string, annexType: 'sales'
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
       const invoiceType = annexType === 'sales' ? 'sale' : 'purchase';
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('invoices')
-        .select('invoice_number, issued_date_bs, is_vat_invoice, buyer_pan, total_amount, taxable_amount, vat_amount, customer:parties!invoices_customer_id_fkey(name, pan_number), vendor:parties!invoices_vendor_id_fkey(name, pan_number)')
+        .select('invoice_number, issued_date_bs, is_vat_invoice, buyer_name, buyer_pan, total_amount, taxable_amount, vat_amount, customer:parties!invoices_customer_id_fkey(name, pan_number), vendor:parties!invoices_vendor_id_fkey(name, pan_number)')
         .eq('business_id', business!.id)
         .eq('type', invoiceType)
         .is('deleted_at', null)
@@ -290,7 +303,7 @@ export function useVATAnnex(dateFrom: string, dateTo: string, annexType: 'sales'
           invoice_number: inv.invoice_number,
           date_bs: inv.issued_date_bs,
           buyer_pan: pan,
-          buyer_name: party?.name || '—',
+          buyer_name: inv.buyer_name || party?.name || '—',
           total_sales: totalAmt,
           exempt_sales: exempt,
           taxable_amount: taxable,

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, Search, Wallet, Plus } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,6 +9,9 @@ import { useAllPayments, type PaymentWithDetails } from '@/hooks/usePayments';
 import { formatNPR } from '@/lib/nepal-format';
 import StandalonePaymentDialog from '@/components/payments/StandalonePaymentDialog';
 import { toast } from 'sonner';
+import PaginationControls from '@/components/shared/PaginationControls';
+
+const PAGE_SIZE = 50;
 
 const METHOD_LABELS: Record<string, string> = {
   cash: 'Cash',
@@ -106,8 +109,15 @@ function PaymentTable({ payments, type }: { payments: PaymentWithDetails[]; type
 export default function PaymentsPage() {
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'in' | 'out'>('in');
+  const [pageIn, setPageIn] = useState(1);
+  const [pageOut, setPageOut] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const { data: payments = [], isLoading, recordStandalonePayment } = useAllPayments();
+
+  useEffect(() => {
+    setPageIn(1);
+    setPageOut(1);
+  }, [search]);
 
   const { paymentsIn, paymentsOut, statsIn, statsOut } = useMemo(() => {
     // ... keep existing code
@@ -159,6 +169,30 @@ export default function PaymentsPage() {
       statsOut: { total: pOut.reduce((s, p) => s + (p.status === 'completed' ? p.amount : 0), 0), month: sumMonth(pOut), count: pOut.length },
     };
   }, [payments, search]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(paymentsIn.length / PAGE_SIZE));
+    if (pageIn > totalPages) {
+      setPageIn(totalPages);
+    }
+  }, [paymentsIn.length, pageIn]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(paymentsOut.length / PAGE_SIZE));
+    if (pageOut > totalPages) {
+      setPageOut(totalPages);
+    }
+  }, [paymentsOut.length, pageOut]);
+
+  const paginatedPaymentsIn = useMemo(() => {
+    const from = (pageIn - 1) * PAGE_SIZE;
+    return paymentsIn.slice(from, from + PAGE_SIZE);
+  }, [paymentsIn, pageIn]);
+
+  const paginatedPaymentsOut = useMemo(() => {
+    const from = (pageOut - 1) * PAGE_SIZE;
+    return paymentsOut.slice(from, from + PAGE_SIZE);
+  }, [paymentsOut, pageOut]);
 
   const handleRecordPayment = (data: Record<string, any>) => {
     recordStandalonePayment.mutate(data as any, {
@@ -254,8 +288,9 @@ export default function PaymentsPage() {
             {isLoading ? (
               <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
             ) : (
-              <PaymentTable payments={paymentsIn} type="in" />
+              <PaymentTable payments={paginatedPaymentsIn} type="in" />
             )}
+            <PaginationControls page={pageIn} pageSize={PAGE_SIZE} total={paymentsIn.length} onPageChange={setPageIn} />
           </div>
         </TabsContent>
 
@@ -299,8 +334,9 @@ export default function PaymentsPage() {
             {isLoading ? (
               <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
             ) : (
-              <PaymentTable payments={paymentsOut} type="out" />
+              <PaymentTable payments={paginatedPaymentsOut} type="out" />
             )}
+            <PaginationControls page={pageOut} pageSize={PAGE_SIZE} total={paymentsOut.length} onPageChange={setPageOut} />
           </div>
         </TabsContent>
       </Tabs>

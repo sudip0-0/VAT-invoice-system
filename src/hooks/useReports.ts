@@ -1,6 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
+import type { PaymentMethod, TablesInsert } from '@/integrations/local-db/types';
+import { calculateProfitLossTotals } from '@/lib/report-calculations';
 
 // ── Party Ledger (used by PartyDetailPage) ──
 
@@ -20,13 +22,13 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
     queryKey: ['report-ledger', business?.id, partyId, dateFrom, dateTo],
     enabled: !!business?.id && !!partyId && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data: party, error: partyErr } = await supabase
+      const { data: party, error: partyErr } = await localDb
         .from('parties').select('opening_balance, type').eq('id', partyId!).single();
       if (partyErr) throw partyErr;
       const openingBalance = Number(party?.opening_balance || 0);
       const partyType = party?.type; // 'customer' | 'vendor' | 'both'
 
-      const { data: invoices, error: invErr } = await supabase
+      const { data: invoices, error: invErr } = await localDb
         .from('invoices')
         .select('id, invoice_number, type, issued_date_bs, issued_date_ad, total_amount, created_at')
         .eq('business_id', business!.id).is('deleted_at', null).neq('status', 'cancelled')
@@ -35,7 +37,7 @@ export function usePartyLedger(partyId: string | undefined, dateFrom: string, da
         .order('issued_date_ad');
       if (invErr) throw invErr;
 
-      const { data: payments, error: payErr } = await supabase
+      const { data: payments, error: payErr } = await localDb
         .from('payments')
         .select('id, payment_date_bs, payment_date_ad, amount, method, reference, created_at, invoice_id')
         .eq('business_id', business!.id).eq('party_id', partyId!).eq('status', 'completed')
@@ -111,7 +113,7 @@ export function useSalesReport(dateFrom: string, dateTo: string) {
     queryKey: ['report-sales', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('invoices')
         .select('*, customer:parties!invoices_customer_id_fkey(name), vendor:parties!invoices_vendor_id_fkey(name)')
         .eq('business_id', business!.id)
@@ -125,7 +127,7 @@ export function useSalesReport(dateFrom: string, dateTo: string) {
       const rows: SalesReportRow[] = (data || []).map((inv: any) => ({
         date_bs: inv.issued_date_bs,
         invoice_number: inv.invoice_number,
-        party_name: inv.customer?.name || inv.vendor?.name || '—',
+        party_name: inv.buyer_name || inv.customer?.name || inv.vendor?.name || '—',
         type: inv.type,
         sub_total: Number(inv.sub_total),
         discount: Number(inv.discount_amount),
@@ -168,7 +170,7 @@ export function useVATSummary(dateFrom: string, dateTo: string) {
     queryKey: ['report-vat', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('invoices')
         .select('type, vat_period, taxable_amount, vat_amount')
         .eq('business_id', business!.id)
@@ -208,19 +210,28 @@ export function useProfitLoss(dateFrom: string, dateTo: string) {
     queryKey: ['report-pnl', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      // Fetch sales & purchases
-      const { data: invoices, error } = await supabase
-        .from('invoices')
-        .select('type, total_amount, discount_amount, vat_amount, invoice_items(quantity, rate, item_id, total_amount)')
-        .eq('business_id', business!.id)
-        .is('deleted_at', null)
-        .neq('status', 'cancelled')
-        .in('type', ['sale', 'purchase'])
-        .gte('issued_date_ad', dateFrom)
-        .lte('issued_date_ad', dateTo);
+      const [{ data: invoices, error }, { data: expenses, error: expenseErr }] = await Promise.all([
+        localDb
+          .from('invoices')
+          .select('type, total_amount, discount_amount, vat_amount, invoice_items(quantity, rate, item_id, total_amount)')
+          .eq('business_id', business!.id)
+          .is('deleted_at', null)
+          .neq('status', 'cancelled')
+          .in('type', ['sale', 'purchase'])
+          .gte('issued_date_ad', dateFrom)
+          .lte('issued_date_ad', dateTo),
+        localDb
+          .from('expenses')
+          .select('id, category, description, amount, expense_date_bs, expense_date_ad, payment_method, reference')
+          .eq('business_id', business!.id)
+          .is('deleted_at', null)
+          .gte('expense_date_ad', dateFrom)
+          .lte('expense_date_ad', dateTo)
+          .order('expense_date_ad'),
+      ]);
       if (error) throw error;
+      if (expenseErr) throw expenseErr;
 
-      // Fetch item purchase prices for COGS
       const itemIds = new Set<string>();
       for (const inv of invoices || []) {
         if (inv.type === 'sale') {
@@ -230,9 +241,9 @@ export function useProfitLoss(dateFrom: string, dateTo: string) {
         }
       }
 
-      let itemPriceMap = new Map<string, number>();
+      const itemPriceMap = new Map<string, number>();
       if (itemIds.size > 0) {
-        const { data: items } = await supabase
+        const { data: items } = await localDb
           .from('items')
           .select('id, purchase_price')
           .in('id', Array.from(itemIds));
@@ -241,48 +252,71 @@ export function useProfitLoss(dateFrom: string, dateTo: string) {
         }
       }
 
-      let totalSales = 0;
-      let totalPurchases = 0;
-      let totalCOGS = 0;
-      let totalSalesDiscount = 0;
-      let totalPurchaseDiscount = 0;
-      let totalSalesVAT = 0;
-      let totalPurchaseVAT = 0;
-
-      for (const inv of invoices || []) {
-        if (inv.type === 'sale') {
-          totalSales += Number(inv.total_amount);
-          totalSalesDiscount += Number(inv.discount_amount);
-          totalSalesVAT += Number(inv.vat_amount);
-          for (const item of inv.invoice_items || []) {
-            const pp = item.item_id ? (itemPriceMap.get(item.item_id) || 0) : 0;
-            totalCOGS += pp * Number(item.quantity);
-          }
-        } else {
-          totalPurchases += Number(inv.total_amount);
-          totalPurchaseDiscount += Number(inv.discount_amount);
-          totalPurchaseVAT += Number(inv.vat_amount);
-        }
-      }
-
-      const grossProfit = totalSales - totalCOGS;
-      const netProfit = grossProfit; // simplified — no expenses table
+      const totals = calculateProfitLossTotals(invoices || [], itemPriceMap, expenses || []);
 
       return {
-        totalSales,
-        totalPurchases,
-        totalCOGS,
-        grossProfit,
-        netProfit,
-        totalSalesDiscount,
-        totalPurchaseDiscount,
-        totalSalesVAT,
-        totalPurchaseVAT,
+        ...totals,
+        expenses: expenses || [],
       };
     },
   });
 }
 
+export function useExpenses(dateFrom: string, dateTo: string) {
+  const { business } = useBusiness();
+  const qc = useQueryClient();
+  const key = ['expenses', business?.id, dateFrom, dateTo];
+
+  const query = useQuery({
+    queryKey: key,
+    enabled: !!business?.id && !!dateFrom && !!dateTo,
+    queryFn: async () => {
+      const { data, error } = await localDb
+        .from('expenses')
+        .select('*')
+        .eq('business_id', business!.id)
+        .is('deleted_at', null)
+        .gte('expense_date_ad', dateFrom)
+        .lte('expense_date_ad', dateTo)
+        .order('expense_date_ad', { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const invalidateExpenseReports = () => {
+    qc.invalidateQueries({ queryKey: key });
+    qc.invalidateQueries({ queryKey: ['report-pnl', business?.id] });
+    qc.invalidateQueries({ queryKey: ['report-trial-balance', business?.id] });
+    qc.invalidateQueries({ queryKey: ['report-balance-sheet', business?.id] });
+  };
+
+  const createExpense = useMutation({
+    mutationFn: async (expense: Omit<TablesInsert<'expenses'>, 'business_id'>) => {
+      const { error } = await localDb.from('expenses').insert({
+        ...expense,
+        business_id: business!.id,
+        payment_method: (expense.payment_method || 'cash') as PaymentMethod,
+      });
+      if (error) throw error;
+    },
+    onSuccess: invalidateExpenseReports,
+  });
+
+  const deleteExpense = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await localDb
+        .from('expenses')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('business_id', business!.id);
+      if (error) throw error;
+    },
+    onSuccess: invalidateExpenseReports,
+  });
+
+  return { ...query, createExpense, deleteExpense };
+}
 // ── Bill-wise Profit ──
 
 export interface BillProfitRow {
@@ -302,9 +336,9 @@ export function useBillWiseProfit(dateFrom: string, dateTo: string) {
     queryKey: ['report-bill-profit', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data: invoices, error } = await supabase
+      const { data: invoices, error } = await localDb
         .from('invoices')
-        .select('id, invoice_number, issued_date_bs, total_amount, customer:parties!invoices_customer_id_fkey(name), invoice_items(quantity, item_id)')
+        .select('id, invoice_number, issued_date_bs, total_amount, buyer_name, customer:parties!invoices_customer_id_fkey(name), invoice_items(quantity, item_id)')
         .eq('business_id', business!.id)
         .eq('type', 'sale')
         .is('deleted_at', null)
@@ -323,7 +357,7 @@ export function useBillWiseProfit(dateFrom: string, dateTo: string) {
 
       let itemPriceMap = new Map<string, number>();
       if (itemIds.size > 0) {
-        const { data: items } = await supabase.from('items').select('id, purchase_price').in('id', Array.from(itemIds));
+        const { data: items } = await localDb.from('items').select('id, purchase_price').in('id', Array.from(itemIds));
         for (const it of items || []) itemPriceMap.set(it.id, Number(it.purchase_price || 0));
       }
 
@@ -338,7 +372,7 @@ export function useBillWiseProfit(dateFrom: string, dateTo: string) {
         return {
           invoice_number: inv.invoice_number,
           date_bs: inv.issued_date_bs,
-          party_name: inv.customer?.name || '—',
+          party_name: inv.buyer_name || inv.customer?.name || '—',
           sale_amount: saleAmt,
           cost_amount: costAmt,
           profit,
@@ -375,7 +409,7 @@ export function useCashFlow(dateFrom: string, dateTo: string) {
     queryKey: ['report-cashflow', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data: payments, error } = await supabase
+      const { data: payments, error } = await localDb
         .from('payments')
         .select('*, party:parties(name, type), invoice:invoices(type, invoice_number)')
         .eq('business_id', business!.id)
@@ -436,9 +470,9 @@ export function usePartyStatement(dateFrom: string, dateTo: string) {
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
       const [{ data: parties, error: pErr }, { data: invoices, error: iErr }, { data: payments, error: payErr }] = await Promise.all([
-        supabase.from('parties').select('id, name, type, opening_balance').eq('business_id', business!.id).is('deleted_at', null),
-        supabase.from('invoices').select('id, type, customer_id, vendor_id, total_amount').eq('business_id', business!.id).is('deleted_at', null).neq('status', 'cancelled').gte('issued_date_ad', dateFrom).lte('issued_date_ad', dateTo),
-        supabase.from('payments').select('party_id, amount').eq('business_id', business!.id).eq('status', 'completed').gte('payment_date_ad', dateFrom).lte('payment_date_ad', dateTo),
+        localDb.from('parties').select('id, name, type, opening_balance').eq('business_id', business!.id).is('deleted_at', null),
+        localDb.from('invoices').select('id, type, customer_id, vendor_id, total_amount').eq('business_id', business!.id).is('deleted_at', null).neq('status', 'cancelled').gte('issued_date_ad', dateFrom).lte('issued_date_ad', dateTo),
+        localDb.from('payments').select('party_id, amount').eq('business_id', business!.id).eq('status', 'completed').gte('payment_date_ad', dateFrom).lte('payment_date_ad', dateTo),
       ]);
       if (pErr) throw pErr;
       if (iErr) throw iErr;
@@ -493,7 +527,7 @@ export function useSalePurchaseByParty(dateFrom: string, dateTo: string) {
     queryKey: ['report-sp-by-party', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data: invoices, error } = await supabase
+      const { data: invoices, error } = await localDb
         .from('invoices')
         .select('type, total_amount, customer:parties!invoices_customer_id_fkey(name, type), vendor:parties!invoices_vendor_id_fkey(name, type)')
         .eq('business_id', business!.id)
@@ -542,7 +576,7 @@ export function useStockSummary() {
     queryKey: ['report-stock-summary', business?.id],
     enabled: !!business?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('items')
         .select('name, code, unit, opening_stock, current_stock, purchase_price, sale_price')
         .eq('business_id', business!.id)
@@ -588,7 +622,7 @@ export function useAllParties() {
     queryKey: ['report-all-parties', business?.id],
     enabled: !!business?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('parties')
         .select('id, name, type, phone, city, opening_balance, is_active')
         .eq('business_id', business!.id)
@@ -599,3 +633,4 @@ export function useAllParties() {
     },
   });
 }
+

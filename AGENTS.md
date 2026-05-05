@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`src/` contains the app code. Use `src/pages` for route-level screens, `src/components` for reusable UI and feature components, `src/hooks` for data and state hooks, `src/contexts` for providers, `src/lib` for utilities, and `src/integrations/supabase` for the client and generated types. Keep tests in `src/test` or colocated as `*.test.ts(x)`. Static assets live in `public/`. Database changes belong in `supabase/migrations/` as timestamped SQL files.
+`src/` contains the app code. Use `src/pages` for route-level screens, `src/components` for reusable UI and feature components, `src/hooks` for data and state hooks, `src/contexts` for providers, `src/lib` for utilities, and `src/integrations/local-db` for the desktop database adapter and generated-style types. Keep tests in `src/test` or colocated as `*.test.ts(x)`. Static assets live in `public/`. Database schema and index changes belong in `electron/db/schema.sql`.
 
 ## Build, Test, and Development Commands
 Install dependencies with `npm install`.
@@ -32,10 +32,10 @@ This project uses TypeScript, React, Tailwind CSS, and shadcn/ui. Follow the exi
 Vitest is configured in `vitest.config.ts` with Testing Library and setup from `src/test/setup.ts`. Name tests `*.test.ts` or `*.spec.ts` under `src/`. Add tests for business logic, hooks, auth flows, and invoice/payment calculations when behavior changes. Run `npm test` and `npm run lint` before opening a PR.
 
 ## Commit & Pull Request Guidelines
-Recent history mixes clear commits like `Fix vendor payments logic` with vague ones like `Changes`. Prefer short, imperative commit subjects that describe the behavior change. For pull requests, include a summary, validation steps, linked issues, and screenshots for UI or print-layout updates. If a change affects Supabase schema or environment variables, call that out explicitly and include the migration file name.
+Recent history mixes clear commits like `Fix vendor payments logic` with vague ones like `Changes`. Prefer short, imperative commit subjects that describe the behavior change. For pull requests, include a summary, validation steps, linked issues, and screenshots for UI or print-layout updates. If a change affects the local database schema or environment variables, call that out explicitly.
 
 ## Security & Configuration Tips
-Keep secrets in local environment files and do not commit credentials. When changing database schema, add a new migration in `supabase/migrations/` instead of rewriting an existing applied migration.
+Keep secrets in local environment files and do not commit credentials. When changing database schema for the desktop app, update `electron/db/schema.sql` and keep it SQLite-compatible.
 
 ## Behavioral guidelines to reduce common LLM coding mistakes.
 

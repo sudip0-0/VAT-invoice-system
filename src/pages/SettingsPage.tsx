@@ -8,7 +8,7 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useBusiness } from '@/contexts/BusinessContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { localDb } from '@/integrations/local-db/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Save } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -82,7 +82,7 @@ function BusinessProfileTab() {
   const handleSave = async () => {
     if (!business) return;
     setSaving(true);
-    const { error } = await supabase
+    const { error } = await localDb
       .from('businesses')
       .update({
         name: form.name,
@@ -176,7 +176,7 @@ function TaxRatesTab() {
     queryKey: key,
     enabled: !!business?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('tax_rates')
         .select('*')
         .eq('business_id', business!.id)
@@ -194,7 +194,7 @@ function TaxRatesTab() {
 
   const addRate = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from('tax_rates').insert({
+      const { error } = await localDb.from('tax_rates').insert({
         business_id: business!.id,
         name: newName.trim(),
         type: newType as any,
@@ -214,7 +214,7 @@ function TaxRatesTab() {
 
   const toggleActive = useMutation({
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
-      const { error } = await supabase.from('tax_rates').update({ is_active }).eq('id', id);
+      const { error } = await localDb.from('tax_rates').update({ is_active }).eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: key }),
@@ -222,7 +222,7 @@ function TaxRatesTab() {
 
   const deleteRate = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('tax_rates').delete().eq('id', id);
+      const { error } = await localDb.from('tax_rates').delete().eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -339,7 +339,7 @@ function UserProfileTab() {
     queryKey: ['profile', user?.id],
     enabled: !!user?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('profiles')
         .select('name, phone')
         .eq('user_id', user!.id)
@@ -359,7 +359,7 @@ function UserProfileTab() {
   const handleSaveProfile = async () => {
     if (!user) return;
     setSaving(true);
-    const { error } = await supabase
+    const { error } = await localDb
       .from('profiles')
       .update({ name, phone: phone || null })
       .eq('user_id', user.id);
@@ -377,7 +377,7 @@ function UserProfileTab() {
       return;
     }
     setSaving(true);
-    const { error } = await supabase.auth.updateUser({ password: newPw });
+    const { error } = await localDb.auth.updateUser({ password: newPw });
     setSaving(false);
     if (error) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });

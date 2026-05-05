@@ -37,8 +37,8 @@ const PrintInvoice = forwardRef<HTMLDivElement, PrintInvoiceProps>(
       hour12: true,
     });
 
-    const partyName = party?.name || "-";
-    const partyAddress = `${party?.address || "-"}${party?.city ? `, ${party.city}` : ""}`;
+    const partyName = invoice.buyer_name || party?.name || "-";
+    const partyAddress = invoice.buyer_address || `${party?.address || "-"}${party?.city ? `, ${party.city}` : ""}`;
     const partyPan = party?.pan_number || invoice.buyer_pan || "-";
     const remarkText = invoice.notes || (isSale ? "SALES" : "PURCHASE");
     const taxableAmount = invoice.is_vat_invoice ? invoice.taxable_amount : invoice.sub_total;

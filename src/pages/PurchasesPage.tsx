@@ -1,28 +1,33 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
-import { useInvoices } from '@/hooks/useInvoices';
+import { useInvoiceList } from '@/hooks/useInvoices';
 import { formatNPR } from '@/lib/nepal-format';
 import { Button } from '@/components/ui/button';
 import StatusBadge from '@/components/shared/StatusBadge';
+import PaginationControls from '@/components/shared/PaginationControls';
+
+const PAGE_SIZE = 50;
 
 export default function PurchasesPage() {
   const navigate = useNavigate();
-  const { invoices, isLoading } = useInvoices();
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
 
-  const purchases = invoices.filter((inv) => inv.type === 'purchase');
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, search]);
 
-  const filtered = purchases.filter((inv) => {
-    if (statusFilter !== 'all' && inv.status !== statusFilter) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return inv.invoice_number.toLowerCase().includes(q) ||
-        (inv.vendor?.name || '').toLowerCase().includes(q);
-    }
-    return true;
+  const { data, isLoading } = useInvoiceList({
+    type: 'purchase',
+    status: statusFilter,
+    search,
+    page,
+    pageSize: PAGE_SIZE,
   });
+  const purchases = data?.data || [];
+  const total = data?.count || 0;
 
   const statuses = [
     { label: 'All', value: 'all' },
@@ -66,9 +71,9 @@ export default function PurchasesPage() {
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {isLoading ? (
           <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
-        ) : filtered.length === 0 ? (
+        ) : purchases.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
-            {purchases.length === 0 ? 'No purchase bills yet. Create your first!' : 'No matching purchases.'}
+            {total === 0 ? 'No purchase bills found.' : 'No purchase bills on this page.'}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -84,7 +89,7 @@ export default function PurchasesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((inv) => (
+                {purchases.map((inv) => (
                   <tr key={inv.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors cursor-pointer" onClick={() => navigate(`/invoices/${inv.id}`)}>
                     <td className="px-4 py-3">
                       <span className="font-medium text-foreground">{inv.invoice_number}</span>
@@ -107,6 +112,7 @@ export default function PurchasesPage() {
             </table>
           </div>
         )}
+        <PaginationControls page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
       </div>
     </div>
   );

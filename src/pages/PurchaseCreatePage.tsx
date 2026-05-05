@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useInvoices, useTaxRates } from '@/hooks/useInvoices';
 import { useParties } from '@/hooks/useParties';
@@ -15,6 +14,8 @@ import { formatNPR } from '@/lib/nepal-format';
 import { type BSDate, adToBS, formatBSShort, todayBS, getVATPeriod } from '@/lib/bs-calendar';
 import { nepalTodayISO } from '@/lib/nepal-date';
 import BSDatePicker from '@/components/shared/BSDatePicker';
+import ItemCombobox from '@/components/invoices/ItemCombobox';
+import PartyCombobox from '@/components/invoices/PartyCombobox';
 
 interface LineItem {
   key: string;
@@ -29,6 +30,7 @@ interface LineItem {
   taxable_amount: number;
   vat_amount: number;
   total_amount: number;
+  is_custom: boolean;
 }
 
 function newLine(): LineItem {
@@ -45,12 +47,13 @@ function newLine(): LineItem {
     taxable_amount: 0,
     vat_amount: 0,
     total_amount: 0,
+    is_custom: false,
   };
 }
 
 function calcLine(line: LineItem): LineItem {
   const gross = line.quantity * line.rate;
-  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : line.discount_amt;
+  const discAmt = line.discount_pct > 0 ? gross * (line.discount_pct / 100) : 0;
   const taxable = gross - discAmt;
   const vat = taxable * (line.vat_rate / 100);
   return {
@@ -108,6 +111,7 @@ export default function PurchaseCreatePage() {
       unit: item.unit,
       rate: item.purchase_price ?? item.sale_price,
       vat_rate: isVat ? vatRate : 0,
+      is_custom: false,
     });
   }, [inventoryItems, isVat, vatRate, updateLine]);
 
@@ -199,14 +203,12 @@ export default function PurchaseCreatePage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div>
             <Label className="text-xs">Vendor *</Label>
-            <Select value={vendorId} onValueChange={setVendorId}>
-              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select vendor..." /></SelectTrigger>
-              <SelectContent>
-                {vendors.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <PartyCombobox
+              parties={vendors}
+              value={vendorId}
+              mode="vendor"
+              onSelect={setVendorId}
+            />
           </div>
           <div>
             <Label className="text-xs">Vendor Invoice #</Label>
@@ -271,27 +273,15 @@ export default function PurchaseCreatePage() {
                 <tr key={line.key} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
                   <td className="px-3 py-2">
-                    <Select
-                      value={line.item_id || ''}
-                      onValueChange={(v) => {
-                        if (v === '__custom') {
-                          updateLine(line.key, { item_id: null, name: '' });
-                        } else {
-                          selectItem(line.key, v);
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="h-8 text-xs border-0 bg-transparent shadow-none px-0">
-                        <SelectValue placeholder="Select item..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inventoryItems.map((it) => (
-                          <SelectItem key={it.id} value={it.id}>{it.name} {it.code ? `(${it.code})` : ''}</SelectItem>
-                        ))}
-                        <SelectItem value="__custom">Custom item...</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {line.item_id === null && line.name === '' && (
+                    <ItemCombobox
+                      items={inventoryItems}
+                      value={line.item_id}
+                      displayName={line.name}
+                      mode="purchase"
+                      onSelect={(itemId) => selectItem(line.key, itemId)}
+                      onCustom={() => updateLine(line.key, { item_id: null, name: '', is_custom: true })}
+                    />
+                    {line.is_custom && (
                       <Input
                         value={line.name}
                         onChange={(e) => updateLine(line.key, { name: e.target.value })}

@@ -1,34 +1,37 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Pencil, Trash2 } from 'lucide-react';
-import { useParties, type PartyWithBalance } from '@/hooks/useParties';
+import { usePartyList, type PartyWithBalance } from '@/hooks/useParties';
 import { formatNPR } from '@/lib/nepal-format';
 import PartyDialog, { type PartyFormData } from '@/components/parties/PartyDialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import PaginationControls from '@/components/shared/PaginationControls';
 
 type TabType = 'all' | 'customer' | 'vendor';
+const PAGE_SIZE = 50;
 
 export default function PartiesPage() {
   const [tab, setTab] = useState<TabType>('all');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editParty, setEditParty] = useState<PartyWithBalance | null>(null);
   const [deleteParty, setDeleteParty] = useState<PartyWithBalance | null>(null);
   const [saving, setSaving] = useState(false);
 
   const navigate = useNavigate();
-  const { data: parties = [], isLoading, createParty, updateParty, deleteParty: deletePartyMutation } = useParties();
+  const { data: parties, count, isLoading, createParty, updateParty, deleteParty: deletePartyMutation } = usePartyList({
+    type: tab,
+    search,
+    page,
+    pageSize: PAGE_SIZE,
+  });
   const { toast } = useToast();
 
-  const filtered = parties.filter((p) => {
-    if (tab !== 'all' && p.type !== tab && p.type !== 'both') return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return p.name.toLowerCase().includes(q) || (p.phone || '').includes(q) || (p.pan_number || '').includes(q);
-    }
-    return true;
-  });
+  useEffect(() => {
+    setPage(1);
+  }, [tab, search]);
 
   const handleSave = async (data: PartyFormData) => {
     setSaving(true);
@@ -112,11 +115,11 @@ export default function PartiesPage() {
             <tbody>
               {isLoading ? (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading...</td></tr>
-              ) : filtered.length === 0 ? (
+              ) : parties.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                  {parties.length === 0 ? 'No parties yet. Add your first customer or vendor.' : 'No parties match your search.'}
+                  {count === 0 ? 'No parties found.' : 'No parties on this page.'}
                 </td></tr>
-              ) : filtered.map((p) => (
+              ) : parties.map((p) => (
                 <tr key={p.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3 font-medium text-foreground">
                     <button onClick={() => navigate(`/parties/${p.id}`)} className="hover:underline text-left">
@@ -131,13 +134,16 @@ export default function PartiesPage() {
                   <td className="px-4 py-3 text-muted-foreground">{p.phone || '—'}</td>
                   <td className="px-4 py-3 text-muted-foreground font-mono">{p.pan_number || '—'}</td>
                   <td className="px-4 py-3 text-right">
-                    {p.ledger_balance !== 0 ? (
-                      <span className={`font-medium ${p.ledger_balance > 0 ? 'text-success' : 'text-destructive'}`}>
-                        {formatNPR(Math.abs(p.ledger_balance), { showSymbol: false })}
-                        <span className="ml-1 text-[10px] text-muted-foreground">{p.ledger_balance > 0 ? 'Recv' : 'Pay'}</span>
+                    {p.ledger_balance > 0 ? (
+                      <span className="font-medium text-success">
+                        {formatNPR(p.ledger_balance, { showSymbol: false })} Receivable
+                      </span>
+                    ) : p.ledger_balance < 0 ? (
+                      <span className="font-medium text-destructive">
+                        {formatNPR(Math.abs(p.ledger_balance), { showSymbol: false })} Payable
                       </span>
                     ) : (
-                      <span className="text-muted-foreground">—</span>
+                      <span className="text-muted-foreground">Settled</span>
                     )}
                   </td>
                   <td className="px-4 py-3">
@@ -155,6 +161,7 @@ export default function PartiesPage() {
             </tbody>
           </table>
         </div>
+        <PaginationControls page={page} pageSize={PAGE_SIZE} total={count} onPageChange={setPage} />
       </div>
 
       <PartyDialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditParty(null); }}

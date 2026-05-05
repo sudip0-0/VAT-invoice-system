@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
 
 // ── Item-wise Sales/Purchase ──
@@ -21,7 +21,7 @@ export function useItemWiseSalesPurchase(dateFrom: string, dateTo: string) {
     queryKey: ['report-item-wise', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data: invoices, error } = await supabase
+      const { data: invoices, error } = await localDb
         .from('invoices')
         .select('type, invoice_items(item_id, name, unit, quantity, total_amount)')
         .eq('business_id', business!.id)
@@ -41,7 +41,7 @@ export function useItemWiseSalesPurchase(dateFrom: string, dateTo: string) {
       }
       let codeMap = new Map<string, string>();
       if (itemIds.size > 0) {
-        const { data: items } = await supabase.from('items').select('id, code').in('id', Array.from(itemIds));
+        const { data: items } = await localDb.from('items').select('id, code').in('id', Array.from(itemIds));
         for (const it of items || []) if (it.code) codeMap.set(it.id, it.code);
       }
 
@@ -93,19 +93,18 @@ export function useLowStockAlert() {
     queryKey: ['report-low-stock', business?.id],
     enabled: !!business?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('items')
         .select('name, code, unit, current_stock, low_stock_alert, purchase_price, sale_price')
         .eq('business_id', business!.id)
         .eq('type', 'product')
         .eq('is_active', true)
         .is('deleted_at', null)
-        .not('low_stock_alert', 'is', null)
         .order('current_stock');
       if (error) throw error;
 
       return (data || [])
-        .filter(it => Number(it.current_stock) <= Number(it.low_stock_alert))
+        .filter(it => it.low_stock_alert != null && Number(it.current_stock) <= Number(it.low_stock_alert))
         .map(it => ({
           item_name: it.name,
           code: it.code,
@@ -141,12 +140,12 @@ export function useDayBook(dateFrom: string, dateTo: string) {
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
       const [{ data: invoices, error: iErr }, { data: payments, error: pErr }] = await Promise.all([
-        supabase.from('invoices')
-          .select('invoice_number, type, issued_date_bs, issued_date_ad, total_amount, created_at, customer:parties!invoices_customer_id_fkey(name), vendor:parties!invoices_vendor_id_fkey(name)')
+        localDb.from('invoices')
+          .select('invoice_number, type, issued_date_bs, issued_date_ad, buyer_name, total_amount, created_at, customer:parties!invoices_customer_id_fkey(name), vendor:parties!invoices_vendor_id_fkey(name)')
           .eq('business_id', business!.id).is('deleted_at', null).neq('status', 'cancelled')
           .gte('issued_date_ad', dateFrom).lte('issued_date_ad', dateTo)
           .order('issued_date_ad'),
-        supabase.from('payments')
+        localDb.from('payments')
           .select('payment_date_bs, payment_date_ad, amount, method, reference, created_at, party:parties(name)')
           .eq('business_id', business!.id).eq('status', 'completed')
           .gte('payment_date_ad', dateFrom).lte('payment_date_ad', dateTo)
@@ -159,7 +158,7 @@ export function useDayBook(dateFrom: string, dateTo: string) {
 
       for (const inv of invoices || []) {
         const isSale = inv.type === 'sale';
-        const party = (inv as any).customer?.name || (inv as any).vendor?.name || '—';
+        const party = (inv as any).buyer_name || (inv as any).customer?.name || (inv as any).vendor?.name || '—';
         const amt = Number(inv.total_amount);
         const time = new Date(inv.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
         entries.push({
@@ -212,9 +211,9 @@ export function useCNDNRegister(dateFrom: string, dateTo: string) {
     queryKey: ['report-cndn', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('invoices')
-        .select('invoice_number, type, issued_date_bs, total_amount, status, customer:parties!invoices_customer_id_fkey(name), vendor:parties!invoices_vendor_id_fkey(name)')
+        .select('invoice_number, type, issued_date_bs, buyer_name, total_amount, status, customer:parties!invoices_customer_id_fkey(name), vendor:parties!invoices_vendor_id_fkey(name)')
         .eq('business_id', business!.id)
         .is('deleted_at', null)
         .in('type', ['sale_return', 'purchase_return'])
@@ -226,7 +225,7 @@ export function useCNDNRegister(dateFrom: string, dateTo: string) {
       const rows: CNDNRow[] = (data || []).map((inv: any) => ({
         date_bs: inv.issued_date_bs,
         invoice_number: inv.invoice_number,
-        party_name: inv.customer?.name || inv.vendor?.name || '—',
+        party_name: inv.buyer_name || inv.customer?.name || inv.vendor?.name || '—',
         type: inv.type === 'sale_return' ? 'Credit Note' : 'Debit Note',
         total_amount: Number(inv.total_amount),
         status: inv.status,
@@ -264,9 +263,9 @@ export function useOutstandingReport(dateFrom: string, dateTo: string) {
     queryKey: ['report-outstanding', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('invoices')
-        .select('invoice_number, type, issued_date_bs, issued_date_ad, due_date_bs, due_date_ad, total_amount, paid_amount, balance_due, status, customer:parties!invoices_customer_id_fkey(name), vendor:parties!invoices_vendor_id_fkey(name)')
+        .select('invoice_number, type, issued_date_bs, issued_date_ad, due_date_bs, due_date_ad, buyer_name, total_amount, paid_amount, balance_due, status, customer:parties!invoices_customer_id_fkey(name), vendor:parties!invoices_vendor_id_fkey(name)')
         .eq('business_id', business!.id)
         .is('deleted_at', null)
         .in('status', ['issued', 'partially_paid', 'overdue'])
@@ -283,7 +282,7 @@ export function useOutstandingReport(dateFrom: string, dateTo: string) {
           invoice_number: inv.invoice_number,
           date_bs: inv.issued_date_bs,
           due_date_bs: inv.due_date_bs,
-          party_name: inv.customer?.name || inv.vendor?.name || '—',
+          party_name: inv.buyer_name || inv.customer?.name || inv.vendor?.name || '—',
           type: inv.type === 'sale' ? 'Receivable' : 'Payable',
           total_amount: Number(inv.total_amount),
           paid_amount: Number(inv.paid_amount),
@@ -318,7 +317,7 @@ export function useVATReturnSummary(dateFrom: string, dateTo: string) {
     queryKey: ['report-vat-return', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('invoices')
         .select('type, is_vat_invoice, taxable_amount, vat_amount, total_amount')
         .eq('business_id', business!.id)
@@ -395,12 +394,12 @@ export function useDailySummary(dateFrom: string, dateTo: string) {
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
       const [{ data: invoices, error: iErr }, { data: payments, error: pErr }] = await Promise.all([
-        supabase.from('invoices')
+        localDb.from('invoices')
           .select('type, issued_date_bs, issued_date_ad, total_amount')
           .eq('business_id', business!.id).is('deleted_at', null).neq('status', 'cancelled')
           .in('type', ['sale', 'purchase'])
           .gte('issued_date_ad', dateFrom).lte('issued_date_ad', dateTo),
-        supabase.from('payments')
+        localDb.from('payments')
           .select('payment_date_bs, payment_date_ad, amount, invoice:invoices(type)')
           .eq('business_id', business!.id).eq('status', 'completed')
           .gte('payment_date_ad', dateFrom).lte('payment_date_ad', dateTo),

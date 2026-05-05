@@ -2,7 +2,7 @@
 
 This file tracks the current implementation state of the VAT Invoice System based on what is present in the repository today. It is a build tracker for contributors, not a roadmap or release log.
 
-**Snapshot Date:** April 22, 2026
+**Snapshot Date:** April 25, 2026
 
 ## Status Legend
 
@@ -77,12 +77,14 @@ Implemented now:
 - Line items support quantity, rate, discounts, VAT, BS/AD dates, notes, and balance tracking.
 - Invoice detail supports printing/PDF, WhatsApp sharing, payment recording, and cancellation.
 - Invoice creation uses a draft-first flow so database stock triggers run after line items exist.
+- Global keyboard shortcuts are available on authenticated screens: `Ctrl/Cmd + Shift + S` (new sale), `Ctrl/Cmd + Shift + P` (new purchase), and `Ctrl/Cmd + Shift + R` (open most recent invoice).
 
 Main gaps or risks:
 
 - The schema includes additional invoice types such as returns and delivery challan, but the UI currently exposes sales, purchases, and quotations only.
 - Validation is mostly concentrated in the frontend flow, with limited automated regression protection.
 - Invoice numbering is business-driven, but there is no explicit conflict or concurrency hardening documented in the UI layer.
+- Shortcuts intentionally skip editable fields to avoid accidental navigation, but this still needs routine desktop QA in real data-entry workflows.
 
 Immediate next actions:
 
@@ -229,19 +231,19 @@ Implemented now:
 
 Main gaps or risks:
 
-- Test coverage is effectively missing; the repo currently contains only a placeholder Vitest example.
+- Automated coverage remains very limited; the repo now has a basic Vitest example plus focused shortcut tests.
 - No CI workflow is present in the repository.
 - There is no repo-level deployment runbook, local seed/demo-data flow, or operational troubleshooting guide.
 
 Immediate next actions:
 
-- Replace the placeholder test with meaningful smoke and integration coverage.
+- Expand from basic/shortcut tests to meaningful smoke and integration coverage.
 - Add a lightweight CI workflow for build, lint, and test.
 - Add contributor-facing docs for setup verification and demo data.
 
 ## Current Priorities / Next Steps
 
-- Replace placeholder tests with coverage for auth, invoice flows, payments, stock updates, and high-risk reports.
+- Expand basic test coverage (currently minimal and shortcut-focused) across auth, invoice flows, payments, stock updates, and high-risk reports.
 - Decide whether schema-defined but UI-missing features such as additional invoice/payment states are real near-term scope or should be trimmed.
 - Harden report accuracy, especially where the code already labels logic as simplified.
 - Add contributor/operations docs for CI, setup validation, and repeatable demo or seed data.

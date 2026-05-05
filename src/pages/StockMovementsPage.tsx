@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Search, ArrowDownCircle, ArrowUpCircle, Package, TrendingUp, TrendingDown, Activity } from 'lucide-react';
 import { useStockMovements } from '@/hooks/useStockMovements';
 import { useItems } from '@/hooks/useItems';
@@ -6,6 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Link } from 'react-router-dom';
+import PaginationControls from '@/components/shared/PaginationControls';
+
+const PAGE_SIZE = 50;
 
 const reasonLabels: Record<string, string> = {
   sale: 'Sale',
@@ -19,11 +22,21 @@ const reasonLabels: Record<string, string> = {
 export default function StockMovementsPage() {
   const [selectedItem, setSelectedItem] = useState<string>('all');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
 
   const { items } = useItems();
-  const { data: movements = [], isLoading } = useStockMovements(
-    selectedItem !== 'all' ? selectedItem : undefined
-  );
+  const { data, isLoading } = useStockMovements({
+    itemId: selectedItem !== 'all' ? selectedItem : undefined,
+    search,
+    page,
+    pageSize: PAGE_SIZE,
+  });
+  const movements = data?.data || [];
+  const total = data?.count || 0;
+
+  useEffect(() => {
+    setPage(1);
+  }, [selectedItem, search]);
 
   const monthStats = useMemo(() => {
     const now = new Date();
@@ -33,16 +46,6 @@ export default function StockMovementsPage() {
     const totalOut = thisMonth.filter(m => m.direction === 'out').reduce((s, m) => s + m.quantity, 0);
     return { totalIn, totalOut, count: thisMonth.length };
   }, [movements]);
-
-  const filtered = movements.filter((m) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      m.item?.name?.toLowerCase().includes(q) ||
-      m.invoice?.invoice_number?.toLowerCase().includes(q) ||
-      m.reason?.toLowerCase().includes(q)
-    );
-  });
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -118,7 +121,7 @@ export default function StockMovementsPage() {
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {isLoading ? (
           <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
-        ) : filtered.length === 0 ? (
+        ) : movements.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
             No stock movements found. Movements are recorded automatically when invoices are issued or cancelled.
           </div>
@@ -138,7 +141,7 @@ export default function StockMovementsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((m) => (
+                {movements.map((m) => (
                   <tr key={m.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
                       {new Date(m.created_at).toLocaleDateString('en-GB', {
@@ -193,6 +196,7 @@ export default function StockMovementsPage() {
             </table>
           </div>
         )}
+        <PaginationControls page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
       </div>
     </div>
   );

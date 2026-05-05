@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Search, Pencil, Trash2, ArrowLeftRight, PackagePlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useItems, useItemCategories } from '@/hooks/useItems';
+import { useItemList, useItemCategories } from '@/hooks/useItems';
 import { formatNPR } from '@/lib/nepal-format';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -11,30 +11,36 @@ import ItemDialog from '@/components/inventory/ItemDialog';
 import StockAdjustmentDialog from '@/components/inventory/StockAdjustmentDialog';
 import type { Item } from '@/hooks/useItems';
 import type { ItemFormData } from '@/components/inventory/ItemDialog';
+import PaginationControls from '@/components/shared/PaginationControls';
+
+const PAGE_SIZE = 50;
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong';
 }
 
 export default function InventoryPage() {
-  const { items, isLoading, createItem, updateItem, deleteItem, adjustStock } = useItems();
   const { categories } = useItemCategories();
   const { toast } = useToast();
 
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('all');
+  const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [deletingItem, setDeletingItem] = useState<Item | null>(null);
   const [adjustingItem, setAdjustingItem] = useState<Item | null>(null);
 
-  const filtered = items.filter((item) => {
-    if (tab === 'product' && item.type !== 'product') return false;
-    if (tab === 'service' && item.type !== 'service') return false;
-    if (tab === 'low_stock' && !(item.low_stock_alert && item.current_stock <= item.low_stock_alert)) return false;
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return item.name.toLowerCase().includes(q) || (item.code || '').toLowerCase().includes(q);
+  useEffect(() => {
+    setPage(1);
+  }, [tab, search]);
+
+  const { items, count, isLoading, createItem, updateItem, deleteItem, adjustStock } = useItemList({
+    type: tab === 'product' || tab === 'service' ? tab : 'all',
+    lowStockOnly: tab === 'low_stock',
+    search,
+    page,
+    pageSize: PAGE_SIZE,
   });
 
   const handleSubmit = async (data: ItemFormData) => {
@@ -64,8 +70,6 @@ export default function InventoryPage() {
     setDeletingItem(null);
   };
 
-  const lowStockCount = items.filter((i) => i.low_stock_alert && i.current_stock <= i.low_stock_alert).length;
-
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -85,12 +89,10 @@ export default function InventoryPage() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="h-8">
-            <TabsTrigger value="all" className="text-xs px-3">All ({items.length})</TabsTrigger>
+            <TabsTrigger value="all" className="text-xs px-3">All</TabsTrigger>
             <TabsTrigger value="product" className="text-xs px-3">Products</TabsTrigger>
             <TabsTrigger value="service" className="text-xs px-3">Services</TabsTrigger>
-            {lowStockCount > 0 && (
-              <TabsTrigger value="low_stock" className="text-xs px-3 text-destructive">Low Stock ({lowStockCount})</TabsTrigger>
-            )}
+            <TabsTrigger value="low_stock" className="text-xs px-3 text-destructive">Low Stock</TabsTrigger>
           </TabsList>
         </Tabs>
         <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground max-w-xs">
@@ -102,8 +104,8 @@ export default function InventoryPage() {
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {isLoading ? (
           <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
-        ) : filtered.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">{items.length === 0 ? 'No items yet. Add your first item!' : 'No matching items.'}</div>
+        ) : items.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">{count === 0 ? 'No items found.' : 'No items on this page.'}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -120,7 +122,7 @@ export default function InventoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((item) => {
+                {items.map((item) => {
                   const isLow = item.low_stock_alert != null && item.current_stock <= item.low_stock_alert;
                   return (
                     <tr key={item.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
@@ -162,6 +164,7 @@ export default function InventoryPage() {
             </table>
           </div>
         )}
+        <PaginationControls page={page} pageSize={PAGE_SIZE} total={count} onPageChange={setPage} />
       </div>
 
       <ItemDialog

@@ -8,10 +8,13 @@ import {
 import { todayBS, formatBS } from '@/lib/bs-calendar';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBusiness } from '@/contexts/BusinessContext';
+import { useAppShortcuts } from '@/hooks/useAppShortcuts';
+import { localDb } from '@/integrations/local-db/client';
+import { useQuery } from '@tanstack/react-query';
 
 const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
-  { label: 'Invoices / Bills', icon: FileText, path: '/invoices' },
+  { label: 'Sales', icon: FileText, path: '/invoices' },
   { label: 'Purchases', icon: ShoppingCart, path: '/purchases' },
   { label: 'Quotations', icon: Receipt, path: '/quotations' },
   { label: 'Inventory', icon: Package, path: '/inventory' },
@@ -29,15 +32,84 @@ interface DashboardLayoutProps {
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const today = todayBS();
   const { signOut, user } = useAuth();
   const { business } = useBusiness();
+  useAppShortcuts();
+
+  const searchQuery = search.trim();
+  const { data: searchResults = [] } = useQuery({
+    queryKey: ['global-search', business?.id, searchQuery],
+    enabled: !!business?.id && searchQuery.length >= 2,
+    queryFn: async () => {
+      const term = `%${searchQuery}%`;
+      const [invoiceRes, partyRes, itemRes] = await Promise.all([
+        localDb
+          .from('invoices')
+          .select('id, invoice_number, type, total_amount')
+          .eq('business_id', business!.id)
+          .is('deleted_at', null)
+          .ilike('invoice_number', term)
+          .limit(5),
+        localDb
+          .from('parties')
+          .select('id, name, type, phone')
+          .eq('business_id', business!.id)
+          .is('deleted_at', null)
+          .ilike('name', term)
+          .limit(5),
+        localDb
+          .from('items')
+          .select('id, name, code, type')
+          .eq('business_id', business!.id)
+          .is('deleted_at', null)
+          .ilike('name', term)
+          .limit(5),
+      ]);
+
+      if (invoiceRes.error) throw invoiceRes.error;
+      if (partyRes.error) throw partyRes.error;
+      if (itemRes.error) throw itemRes.error;
+
+      return [
+        ...(invoiceRes.data || []).map((invoice) => ({
+          id: invoice.id,
+          label: invoice.invoice_number,
+          detail: `${invoice.type} · NPR ${Number(invoice.total_amount || 0).toLocaleString('en-IN')}`,
+          path: invoice.type === 'purchase' ? `/invoices/${invoice.id}` : `/invoices/${invoice.id}`,
+          type: 'Invoice',
+        })),
+        ...(partyRes.data || []).map((party) => ({
+          id: party.id,
+          label: party.name,
+          detail: `${party.type}${party.phone ? ` · ${party.phone}` : ''}`,
+          path: `/parties/${party.id}`,
+          type: 'Party',
+        })),
+        ...(itemRes.data || []).map((item) => ({
+          id: item.id,
+          label: item.name,
+          detail: `${item.type}${item.code ? ` · ${item.code}` : ''}`,
+          path: '/inventory',
+          type: 'Item',
+        })),
+      ];
+    },
+  });
 
   const handleSignOut = async () => {
     await signOut();
     navigate('/login');
+  };
+
+  const handleSearchSelect = (path: string) => {
+    setSearch('');
+    setSearchOpen(false);
+    navigate(path);
   };
 
   return (
@@ -99,9 +171,44 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
           <div className="ml-auto flex items-center gap-2">
             <span className="hidden md:inline text-xs text-muted-foreground">{formatBS(today)}</span>
-            <div className="hidden sm:flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">
+            <div className="relative hidden sm:block">
+              <div className="flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">
               <Search className="h-3.5 w-3.5" />
-              <span>Search...</span>
+                <input
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setSearchOpen(true);
+                  }}
+                  onFocus={() => setSearchOpen(true)}
+                  placeholder="Search invoices, parties, items..."
+                  className="w-56 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
+                />
+              </div>
+              {searchOpen && searchQuery.length >= 2 && (
+                <div className="absolute right-0 top-9 z-50 w-80 overflow-hidden rounded-lg border border-border bg-popover shadow-lg">
+                  {searchResults.length === 0 ? (
+                    <div className="p-3 text-xs text-muted-foreground">No matching records found.</div>
+                  ) : (
+                    <div className="max-h-80 overflow-y-auto py-1">
+                      {searchResults.map((result) => (
+                        <button
+                          key={`${result.type}-${result.id}`}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => handleSearchSelect(result.path)}
+                          className="flex w-full items-start gap-2 px-3 py-2 text-left text-xs hover:bg-muted"
+                        >
+                          <span className="mt-0.5 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">{result.type}</span>
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium text-foreground">{result.label}</span>
+                            <span className="block truncate text-muted-foreground">{result.detail}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <button className="relative rounded-md p-1.5 text-muted-foreground hover:bg-muted">
               <Bell className="h-4 w-4" />

@@ -4,7 +4,7 @@ Nepal-focused billing, VAT invoicing, inventory, and reporting app for small bus
 
 ## Highlights
 
-- Email/password authentication with Supabase
+- Offline email/password authentication in the desktop app
 - Multi-business support with role-based access
 - Business onboarding with default tax-rate setup
 - Sales invoices, purchase bills, and quotations from a shared invoice engine
@@ -24,7 +24,7 @@ Nepal-focused billing, VAT invoicing, inventory, and reporting app for small bus
 - TanStack Query
 - Tailwind CSS
 - shadcn/ui and Radix UI
-- Supabase Auth + Postgres + Row Level Security
+- Electron local SQLite storage through the desktop database adapter
 - Vitest + Testing Library
 
 ## Getting Started
@@ -32,17 +32,6 @@ Nepal-focused billing, VAT invoicing, inventory, and reporting app for small bus
 ### Prerequisites
 
 - Node.js 18+ and npm
-- A Supabase project with the migrations from `supabase/migrations`
-
-### Environment variables
-
-Create a `.env` file with the following variables:
-
-```env
-VITE_SUPABASE_PROJECT_ID=your-project-id
-VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key
-VITE_SUPABASE_URL=https://your-project.supabase.co
-```
 
 ### Install and run
 
@@ -75,17 +64,17 @@ npm run preview
 - `src/App.tsx` - route tree and app providers
 - `src/contexts/` - auth and active business state
 - `src/pages/` - main screens
-- `src/hooks/` - Supabase-backed data and reporting hooks
+- `src/hooks/` - local database-backed data and reporting hooks
 - `src/components/` - layouts, dialogs, invoice print view, and shared UI
 - `src/lib/` - Nepal date, BS calendar, NPR formatting, and amount-in-words utilities
-- `src/integrations/supabase/` - typed Supabase client
-- `supabase/migrations/` - schema, RLS policies, and stock triggers
+- `src/integrations/local-db/` - typed desktop database adapter
+- `electron/db/schema.sql` - local SQLite schema and indexes
 
 ## Core Modules
 
 ### Authentication and business scoping
 
-- Supabase Auth handles email/password login.
+- The desktop auth adapter handles email/password login locally.
 - Each user can belong to one or more businesses through `business_users`.
 - The active business is stored on `profiles.active_business_id`.
 
@@ -99,7 +88,7 @@ npm run preview
 
 - `items` stores products and services.
 - Manual stock adjustments create `stock_movements`.
-- Database triggers also update stock automatically when an invoice is issued or cancelled.
+- The desktop database layer updates stock automatically when an invoice is issued or cancelled.
 
 ### Parties and payments
 
@@ -154,7 +143,7 @@ Important behavior:
 ## Known Gaps
 
 - The automated test suite is currently minimal and contains only a placeholder example.
-- The repo includes Supabase migrations, but no full local seed/demo-data workflow.
+- The repo has no full local seed/demo-data workflow yet.
 - Many reports are computed in the frontend from operational data instead of a dedicated reporting backend.
 
 ## Development Notes

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Printer, CreditCard, Pencil, Ban, FileOutput, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,11 +21,12 @@ import StatusBadge from '@/components/shared/StatusBadge';
 import PaymentDialog from '@/components/invoices/PaymentDialog';
 import PrintInvoice from '@/components/invoices/PrintInvoice';
 import { nepalTodayISO } from '@/lib/nepal-date';
-import { formatBSShort, todayBS } from '@/lib/bs-calendar';
+import { formatBSShort, getVATPeriod, todayBS } from '@/lib/bs-calendar';
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const { business } = useBusiness();
   const { data: invoice, isLoading } = useInvoiceDetail(id);
@@ -84,10 +85,22 @@ export default function InvoiceDetailPage() {
     }
   };
 
+  useEffect(() => {
+    if (searchParams.get('print') !== '1') return;
+    setPrintOptionsOpen(true);
+    navigate(`/invoices/${id}`, { replace: true });
+  }, [id, navigate, searchParams]);
+
   if (isLoading) return <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>;
   if (!invoice) return <div className="p-8 text-center text-sm text-muted-foreground">Invoice not found.</div>;
 
   const party = invoice.customer || invoice.vendor;
+  const displayParty = {
+    name: invoice.buyer_name || (party as any)?.name || '',
+    address: invoice.buyer_address || [(party as any)?.address, (party as any)?.city].filter(Boolean).join(', '),
+    phone: invoice.buyer_phone || (party as any)?.phone || '',
+    pan_number: invoice.buyer_pan || (party as any)?.pan_number || '',
+  };
   const partyId = invoice.customer_id || invoice.vendor_id;
   const lineItems = (invoice.invoice_items || []).sort((a, b) => a.sort_order - b.sort_order);
   const isCancelled = invoice.status === 'cancelled';
@@ -96,7 +109,7 @@ export default function InvoiceDetailPage() {
   const backPath = isQuotation ? '/quotations' : '/invoices';
 
   const handleWhatsAppShare = () => {
-    const partyName = (party as any)?.name || 'Customer';
+    const partyName = displayParty.name || 'Customer';
     const typeName = invoice.type === 'quotation' ? 'Quotation' : invoice.type === 'sale' ? 'Invoice' : 'Purchase Bill';
     const lines = [
       `*${typeName}: ${invoice.invoice_number}*`,
@@ -114,7 +127,7 @@ export default function InvoiceDetailPage() {
     }
     lines.push('', `View: ${window.location.href}`);
     const text = encodeURIComponent(lines.join('\n'));
-    const partyPhone = (party as any)?.phone?.replace(/[^0-9]/g, '') || '';
+    const partyPhone = displayParty.phone.replace(/[^0-9]/g, '') || '';
     const url = partyPhone
       ? `https://wa.me/${partyPhone.startsWith('977') ? partyPhone : '977' + partyPhone}?text=${text}`
       : `https://wa.me/?text=${text}`;
@@ -124,7 +137,8 @@ export default function InvoiceDetailPage() {
   const handleConvertToInvoice = async () => {
     try {
       const todayAd = nepalTodayISO();
-      const todayBs = formatBSShort(todayBS());
+      const todayBsDate = todayBS();
+      const todayBs = formatBSShort(todayBsDate);
       const newId = await createInvoice.mutateAsync({
         invoice: {
           invoice_number: `${business?.invoice_prefix || 'INV'}-${String(business?.next_invoice_num || 1).padStart(4, '0')}`,
@@ -132,13 +146,16 @@ export default function InvoiceDetailPage() {
           status: 'draft',
           customer_id: invoice.customer_id,
           vendor_id: null,
+          buyer_name: invoice.buyer_name,
           buyer_pan: invoice.buyer_pan,
+          buyer_phone: invoice.buyer_phone,
+          buyer_address: invoice.buyer_address,
           is_vat_invoice: invoice.is_vat_invoice,
           issued_date_ad: todayAd,
           issued_date_bs: todayBs,
           due_date_ad: invoice.due_date_ad,
           due_date_bs: invoice.due_date_bs,
-          vat_period: invoice.vat_period,
+          vat_period: invoice.is_vat_invoice ? getVATPeriod(todayBsDate) : null,
           sub_total: invoice.sub_total,
           discount_amount: invoice.discount_amount,
           taxable_amount: invoice.taxable_amount,
@@ -237,10 +254,10 @@ export default function InvoiceDetailPage() {
           <p className="text-[10px] uppercase text-muted-foreground font-medium mb-1">
             {invoice.type === 'sale' ? 'Bill To' : 'Bill From'}
           </p>
-          <p className="text-sm font-medium text-foreground">{(party as any)?.name || '—'}</p>
-          {(party as any)?.address && <p className="text-xs text-muted-foreground">{(party as any).address}{(party as any).city ? `, ${(party as any).city}` : ''}</p>}
-          {(party as any)?.phone && <p className="text-xs text-muted-foreground">Phone: {(party as any).phone}</p>}
-          {(party as any)?.pan_number && <p className="text-xs text-muted-foreground">PAN: {(party as any).pan_number}</p>}
+          <p className="text-sm font-medium text-foreground">{displayParty.name || '—'}</p>
+          {displayParty.address && <p className="text-xs text-muted-foreground">{displayParty.address}</p>}
+          {displayParty.phone && <p className="text-xs text-muted-foreground">Phone: {displayParty.phone}</p>}
+          {displayParty.pan_number && <p className="text-xs text-muted-foreground">PAN: {displayParty.pan_number}</p>}
         </div>
 
         {/* Line Items */}

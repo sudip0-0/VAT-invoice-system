@@ -1,11 +1,26 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
-import type { Tables, TablesInsert, TablesUpdate } from '@/integrations/supabase/types';
+import type { Tables, TablesInsert, TablesUpdate } from '@/integrations/local-db/types';
 
 export type Item = Tables<'items'>;
 export type ItemInsert = TablesInsert<'items'>;
 export type ItemUpdate = TablesUpdate<'items'>;
+
+interface UseItemListParams {
+  type?: string;
+  lowStockOnly?: boolean;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+const DEFAULT_PAGE_SIZE = 50;
+
+function getRange(page = 1, pageSize = DEFAULT_PAGE_SIZE) {
+  const from = (page - 1) * pageSize;
+  return { from, to: from + pageSize - 1 };
+}
 
 export function useItems() {
   const { business } = useBusiness();
@@ -16,7 +31,7 @@ export function useItems() {
     queryKey: key,
     enabled: !!business?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('items')
         .select('*')
         .eq('business_id', business!.id)
@@ -29,7 +44,7 @@ export function useItems() {
 
   const createItem = useMutation({
     mutationFn: async (item: Omit<ItemInsert, 'business_id'>) => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('items')
         .insert({ ...item, business_id: business!.id })
         .select()
@@ -42,7 +57,7 @@ export function useItems() {
 
   const updateItem = useMutation({
     mutationFn: async ({ id, ...updates }: ItemUpdate & { id: string }) => {
-      const { error } = await supabase.from('items').update(updates).eq('id', id);
+      const { error } = await localDb.from('items').update(updates).eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: key }),
@@ -50,7 +65,7 @@ export function useItems() {
 
   const deleteItem = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
+      const { error } = await localDb
         .from('items')
         .update({ deleted_at: new Date().toISOString() })
         .eq('id', id);
@@ -62,7 +77,7 @@ export function useItems() {
   const adjustStock = useMutation({
     mutationFn: async ({ item_id, quantity, direction, reason }: { item_id: string; quantity: number; direction: 'in' | 'out'; reason: string }) => {
       // Get current stock
-      const { data: item, error: fetchErr } = await supabase
+      const { data: item, error: fetchErr } = await localDb
         .from('items')
         .select('current_stock')
         .eq('id', item_id)
@@ -74,14 +89,14 @@ export function useItems() {
       if (newStock < 0) throw new Error('Stock cannot go below zero');
 
       // Update item stock
-      const { error: updateErr } = await supabase
+      const { error: updateErr } = await localDb
         .from('items')
         .update({ current_stock: newStock, updated_at: new Date().toISOString() })
         .eq('id', item_id);
       if (updateErr) throw updateErr;
 
       // Insert stock movement record
-      const { error: moveErr } = await supabase
+      const { error: moveErr } = await localDb
         .from('stock_movements')
         .insert({
           business_id: business!.id,
@@ -103,6 +118,143 @@ export function useItems() {
   return { items: query.data || [], isLoading: query.isLoading, createItem, updateItem, deleteItem, adjustStock };
 }
 
+export function useItemList({
+  type,
+  lowStockOnly = false,
+  search = '',
+  page = 1,
+  pageSize = DEFAULT_PAGE_SIZE,
+}: UseItemListParams = {}) {
+  const { business } = useBusiness();
+  const qc = useQueryClient();
+  const { from, to } = getRange(page, pageSize);
+  const cleanSearch = search.trim();
+
+  const query = useQuery({
+    queryKey: ['item_list', business?.id, type, lowStockOnly, cleanSearch, page, pageSize],
+    enabled: !!business?.id,
+    queryFn: async () => {
+      let query = localDb
+        .from('items')
+        .select('*', { count: 'exact' })
+        .eq('business_id', business!.id)
+        .is('deleted_at', null);
+
+      if (type && type !== 'all') query = query.eq('type', type as any);
+      if (lowStockOnly) {
+        query = query
+          .eq('type', 'product' as any);
+      }
+      if (cleanSearch) {
+        query = query.or(`name.ilike.%${cleanSearch}%,code.ilike.%${cleanSearch}%`);
+      }
+
+      if (lowStockOnly) {
+        const { data, error } = await query.order('name');
+        if (error) throw error;
+        const lowStockItems = (data as Item[]).filter((item) =>
+          item.low_stock_alert != null && Number(item.current_stock) <= Number(item.low_stock_alert)
+        );
+        return { data: lowStockItems.slice(from, to + 1), count: lowStockItems.length };
+      }
+
+      const { data, error, count } = await query.order('name').range(from, to);
+      if (error) throw error;
+      return { data: data as Item[], count: count || 0 };
+    },
+  });
+
+  const createItem = useMutation({
+    mutationFn: async (item: Omit<ItemInsert, 'business_id'>) => {
+      const { data, error } = await localDb
+        .from('items')
+        .insert({ ...item, business_id: business!.id })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['item_list', business?.id] });
+      qc.invalidateQueries({ queryKey: ['items', business?.id] });
+    },
+  });
+
+  const updateItem = useMutation({
+    mutationFn: async ({ id, ...updates }: ItemUpdate & { id: string }) => {
+      const { error } = await localDb.from('items').update(updates).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['item_list', business?.id] });
+      qc.invalidateQueries({ queryKey: ['items', business?.id] });
+    },
+  });
+
+  const deleteItem = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await localDb
+        .from('items')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['item_list', business?.id] });
+      qc.invalidateQueries({ queryKey: ['items', business?.id] });
+    },
+  });
+
+  const adjustStock = useMutation({
+    mutationFn: async ({ item_id, quantity, direction, reason }: { item_id: string; quantity: number; direction: 'in' | 'out'; reason: string }) => {
+      const { data: item, error: fetchErr } = await localDb
+        .from('items')
+        .select('current_stock')
+        .eq('id', item_id)
+        .single();
+      if (fetchErr) throw fetchErr;
+
+      const oldStock = Number(item.current_stock);
+      const newStock = direction === 'in' ? oldStock + quantity : oldStock - quantity;
+      if (newStock < 0) throw new Error('Stock cannot go below zero');
+
+      const { error: updateErr } = await localDb
+        .from('items')
+        .update({ current_stock: newStock, updated_at: new Date().toISOString() })
+        .eq('id', item_id);
+      if (updateErr) throw updateErr;
+
+      const { error: moveErr } = await localDb
+        .from('stock_movements')
+        .insert({
+          business_id: business!.id,
+          item_id,
+          quantity,
+          direction,
+          reason: `manual: ${reason}`,
+          stock_before: oldStock,
+          stock_after: newStock,
+        });
+      if (moveErr) throw moveErr;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['item_list', business?.id] });
+      qc.invalidateQueries({ queryKey: ['items', business?.id] });
+      qc.invalidateQueries({ queryKey: ['stock_movements'] });
+    },
+  });
+
+  return {
+    items: query.data?.data || [],
+    count: query.data?.count || 0,
+    isLoading: query.isLoading,
+    createItem,
+    updateItem,
+    deleteItem,
+    adjustStock,
+  };
+}
+
 export function useItemCategories() {
   const { business } = useBusiness();
   const qc = useQueryClient();
@@ -112,7 +264,7 @@ export function useItemCategories() {
     queryKey: key,
     enabled: !!business?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('item_categories')
         .select('*')
         .eq('business_id', business!.id)
@@ -124,7 +276,7 @@ export function useItemCategories() {
 
   const createCategory = useMutation({
     mutationFn: async (name: string) => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('item_categories')
         .insert({ name, business_id: business!.id })
         .select()

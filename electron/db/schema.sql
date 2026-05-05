@@ -141,7 +141,10 @@ CREATE TABLE IF NOT EXISTS invoices (
   issued_date_bs TEXT NOT NULL,
   due_date_ad TEXT,
   due_date_bs TEXT,
+  buyer_name TEXT,
   buyer_pan TEXT,
+  buyer_phone TEXT,
+  buyer_address TEXT,
   is_vat_invoice INTEGER NOT NULL DEFAULT 0,
   vat_period TEXT,
   sub_total REAL NOT NULL DEFAULT 0,
@@ -206,6 +209,23 @@ CREATE TABLE IF NOT EXISTS payments (
   FOREIGN KEY (party_id) REFERENCES parties(id)
 );
 
+CREATE TABLE IF NOT EXISTS expenses (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'General',
+  description TEXT NOT NULL,
+  amount REAL NOT NULL DEFAULT 0,
+  expense_date_ad TEXT NOT NULL,
+  expense_date_bs TEXT NOT NULL,
+  payment_method TEXT NOT NULL DEFAULT 'cash',
+  reference TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS stock_movements (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL,
@@ -224,8 +244,19 @@ CREATE TABLE IF NOT EXISTS stock_movements (
 
 CREATE INDEX IF NOT EXISTS idx_business_users_user_id ON business_users(user_id);
 CREATE INDEX IF NOT EXISTS idx_items_business_id ON items(business_id);
+CREATE INDEX IF NOT EXISTS idx_items_business_type_name ON items(business_id, type, name);
+CREATE INDEX IF NOT EXISTS idx_items_business_code ON items(business_id, code);
 CREATE INDEX IF NOT EXISTS idx_parties_business_id ON parties(business_id);
+CREATE INDEX IF NOT EXISTS idx_parties_business_type_name ON parties(business_id, type, name);
 CREATE INDEX IF NOT EXISTS idx_invoices_business_id ON invoices(business_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_business_type_status_created ON invoices(business_id, type, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_invoices_business_type_issued_date ON invoices(business_id, type, issued_date_ad);
+CREATE INDEX IF NOT EXISTS idx_invoices_business_invoice_number ON invoices(business_id, invoice_number);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_id ON invoice_items(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_payments_business_id ON payments(business_id);
+CREATE INDEX IF NOT EXISTS idx_payments_business_party_status ON payments(business_id, party_id, status);
+CREATE INDEX IF NOT EXISTS idx_payments_business_payment_date ON payments(business_id, payment_date_ad);
+CREATE INDEX IF NOT EXISTS idx_expenses_business_date ON expenses(business_id, expense_date_ad);
+CREATE INDEX IF NOT EXISTS idx_expenses_business_category ON expenses(business_id, category);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_business_id ON stock_movements(business_id);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_business_created ON stock_movements(business_id, created_at);

@@ -1,5 +1,5 @@
 export type QueryFilter =
-  | { type: "eq" | "neq" | "is" | "gte" | "lte"; column: string; value: unknown }
+  | { type: "eq" | "neq" | "is" | "gte" | "lte" | "ilike"; column: string; value: unknown }
   | { type: "in"; column: string; value: unknown[] }
   | { type: "or"; expression: string };
 
@@ -13,6 +13,8 @@ export interface QueryRequest {
     ascending?: boolean;
   } | null;
   limit?: number | null;
+  offset?: number | null;
+  count?: "exact" | null;
   single?: boolean;
   payload?: Record<string, unknown> | Array<Record<string, unknown>> | null;
 }
@@ -20,6 +22,7 @@ export interface QueryRequest {
 export interface QueryResponse<T = unknown> {
   data: T | null;
   error: { message: string } | null;
+  count?: number | null;
 }
 
 export interface DesktopUser {

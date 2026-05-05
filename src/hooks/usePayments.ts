@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
-import type { TablesInsert } from '@/integrations/supabase/types';
+import type { TablesInsert } from '@/integrations/local-db/types';
 
 export interface PaymentWithDetails {
   id: string;
@@ -24,28 +24,38 @@ export interface PaymentWithDetails {
   party: { name: string; type: string } | null;
 }
 
-export function useAllPayments() {
+interface UseAllPaymentsParams {
+  search?: string;
+}
+
+export function useAllPayments({ search = '' }: UseAllPaymentsParams = {}) {
   const { business } = useBusiness();
   const qc = useQueryClient();
+  const cleanSearch = search.trim();
 
   const query = useQuery({
-    queryKey: ['all_payments', business?.id],
+    queryKey: ['all_payments', business?.id, cleanSearch],
     enabled: !!business?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
+      let request = localDb
         .from('payments')
-        .select('*, invoice:invoices!payments_invoice_id_fkey(invoice_number, type), party:parties!payments_party_id_fkey(name, type)')
+        .select('*, invoice:invoices!payments_invoice_id_fkey(invoice_number, type), party:parties!payments_party_id_fkey(name, type)', { count: 'exact' })
         .eq('business_id', business!.id)
-        .order('payment_date_ad', { ascending: false })
-        .limit(500);
+        .order('payment_date_ad', { ascending: false });
+
+      if (cleanSearch) {
+        request = request.or(`reference.ilike.%${cleanSearch}%,method.ilike.%${cleanSearch}%`);
+      }
+
+      const { data, error, count } = await request;
       if (error) throw error;
-      return data as unknown as PaymentWithDetails[];
+      return { data: data as unknown as PaymentWithDetails[], count: count || 0 };
     },
   });
 
   const recordStandalonePayment = useMutation({
     mutationFn: async (payment: Omit<TablesInsert<'payments'>, 'business_id'>) => {
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from('payments')
         .insert({ ...payment, business_id: business!.id })
         .select()
@@ -59,5 +69,10 @@ export function useAllPayments() {
     },
   });
 
-  return { ...query, recordStandalonePayment };
+  return {
+    data: query.data?.data || [],
+    count: query.data?.count || 0,
+    isLoading: query.isLoading,
+    recordStandalonePayment,
+  };
 }

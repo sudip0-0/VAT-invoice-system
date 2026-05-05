@@ -42,13 +42,16 @@ class LocalQueryBuilder<TData = unknown> implements PromiseLike<QueryResponse<TD
       filters: [],
       orderBy: null,
       limit: null,
+      offset: null,
+      count: null,
       single: false,
       payload: null,
     };
   }
 
-  select(selection = "*") {
+  select(selection = "*", options?: { count?: "exact"; head?: boolean }) {
     this.request.selection = selection;
+    this.request.count = options?.count ?? null;
     return this;
   }
 
@@ -100,6 +103,11 @@ class LocalQueryBuilder<TData = unknown> implements PromiseLike<QueryResponse<TD
     return this;
   }
 
+  ilike(column: string, value: unknown) {
+    this.request.filters.push({ type: "ilike", column, value } satisfies QueryFilter);
+    return this;
+  }
+
   or(expression: string) {
     this.request.filters.push({ type: "or", expression } satisfies QueryFilter);
     return this;
@@ -112,6 +120,12 @@ class LocalQueryBuilder<TData = unknown> implements PromiseLike<QueryResponse<TD
 
   limit(count: number) {
     this.request.limit = count;
+    return this;
+  }
+
+  range(from: number, to: number) {
+    this.request.offset = from;
+    this.request.limit = Math.max(0, to - from + 1);
     return this;
   }
 
@@ -131,7 +145,7 @@ class LocalQueryBuilder<TData = unknown> implements PromiseLike<QueryResponse<TD
   }
 }
 
-export const supabase = {
+export const localDb = {
   from<TTable extends string>(table: TTable) {
     return new LocalQueryBuilder(table);
   },

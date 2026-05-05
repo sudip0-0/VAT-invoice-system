@@ -14,6 +14,7 @@ const QUERYABLE_TABLES = new Set([
   "invoices",
   "invoice_items",
   "payments",
+  "expenses",
   "stock_movements",
 ]);
 
@@ -80,6 +81,7 @@ async function initializeDatabase(app) {
   }
 
   db.exec(getSchemaSql());
+  runSchemaMigrations();
   saveDatabase();
   return { dbPath };
 }
@@ -89,11 +91,41 @@ function saveDatabase() {
   fs.writeFileSync(dbPath, Buffer.from(db.export()));
 }
 
-function createResponse(data = null, error = null) {
-  return {
+function columnExists(table, column) {
+  const statement = db.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`);
+  let exists = false;
+  while (statement.step()) {
+    const row = statement.getAsObject();
+    if (row.name === column) {
+      exists = true;
+      break;
+    }
+  }
+  statement.free();
+  return exists;
+}
+
+function addColumnIfMissing(table, column, definition) {
+  if (!columnExists(table, column)) {
+    runStatement(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(column)} ${definition}`);
+  }
+}
+
+function runSchemaMigrations() {
+  addColumnIfMissing("invoices", "buyer_name", "TEXT");
+  addColumnIfMissing("invoices", "buyer_phone", "TEXT");
+  addColumnIfMissing("invoices", "buyer_address", "TEXT");
+}
+
+function createResponse(data = null, error = null, count = null) {
+  const response = {
     data,
     error: error ? { message: error.message || String(error) } : null,
   };
+  if (count !== null) {
+    response.count = count;
+  }
+  return response;
 }
 
 function sanitizeValue(value) {
@@ -142,6 +174,99 @@ function normalizeRow(table, row) {
 function readAllRows(table) {
   ensureInitialized();
   const statement = db.prepare(`SELECT * FROM ${quoteIdentifier(table)}`);
+  const rows = [];
+  while (statement.step()) {
+    rows.push(normalizeRow(table, statement.getAsObject()));
+  }
+  statement.free();
+  return rows;
+}
+
+function normalizeSqlValue(value) {
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+  return value;
+}
+
+function buildWhereClause(filters = []) {
+  const clauses = [];
+  const values = [];
+
+  for (const filter of filters) {
+    if (filter.type === "or") {
+      const conditions = parseOrExpression(filter.expression);
+      if (conditions.length === 0) {
+        continue;
+      }
+      const orClauses = [];
+      for (const condition of conditions) {
+        const clause = buildConditionSql(condition.operator, condition.column, condition.value, values);
+        if (!clause) {
+          return null;
+        }
+        orClauses.push(clause);
+      }
+      clauses.push(`(${orClauses.join(" OR ")})`);
+      continue;
+    }
+
+    const clause = buildConditionSql(filter.type, filter.column, filter.value, values);
+    if (!clause) {
+      return null;
+    }
+    clauses.push(clause);
+  }
+
+  return {
+    sql: clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "",
+    values,
+  };
+}
+
+function buildConditionSql(operator, column, value, values) {
+  const columnSql = quoteIdentifier(column);
+  switch (operator) {
+    case "eq":
+      values.push(normalizeSqlValue(value));
+      return `${columnSql} = ?`;
+    case "neq":
+      values.push(normalizeSqlValue(value));
+      return `${columnSql} != ?`;
+    case "is":
+      if (value === null) {
+        return `${columnSql} IS NULL`;
+      }
+      values.push(normalizeSqlValue(value));
+      return `${columnSql} IS ?`;
+    case "gte":
+      values.push(normalizeSqlValue(value));
+      return `${columnSql} >= ?`;
+    case "lte":
+      values.push(normalizeSqlValue(value));
+      return `${columnSql} <= ?`;
+    case "ilike":
+      values.push(String(value ?? "").toLowerCase());
+      return `LOWER(CAST(${columnSql} AS TEXT)) LIKE ?`;
+    case "in":
+      if (!Array.isArray(value) || value.length === 0) {
+        return "0 = 1";
+      }
+      values.push(...value.map((entry) => normalizeSqlValue(entry)));
+      return `${columnSql} IN (${value.map(() => "?").join(", ")})`;
+    default:
+      return null;
+  }
+}
+
+function readFilteredRows(table, filters = []) {
+  const where = buildWhereClause(filters);
+  if (!where) {
+    return applyFilters(readAllRows(table), filters);
+  }
+
+  const statement = db.prepare(`SELECT * FROM ${quoteIdentifier(table)}${where.sql}`);
+  statement.bind(where.values);
   const rows = [];
   while (statement.step()) {
     rows.push(normalizeRow(table, statement.getAsObject()));
@@ -296,7 +421,10 @@ function applyInsertDefaults(table, rawPayload) {
         issued_date_bs: "",
         due_date_ad: null,
         due_date_bs: null,
+        buyer_name: null,
         buyer_pan: null,
+        buyer_phone: null,
+        buyer_address: null,
         is_vat_invoice: false,
         vat_period: null,
         sub_total: 0,
@@ -349,6 +477,22 @@ function applyInsertDefaults(table, rawPayload) {
         gateway_ref_id: null,
         created_at: timestamp,
         updated_at: timestamp,
+        ...payload,
+      };
+    case "expenses":
+      return {
+        ...base,
+        category: "General",
+        description: "",
+        amount: 0,
+        expense_date_ad: timestamp.slice(0, 10),
+        expense_date_bs: "",
+        payment_method: "cash",
+        reference: null,
+        notes: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+        deleted_at: null,
         ...payload,
       };
     case "stock_movements":
@@ -410,9 +554,30 @@ function evaluateCondition(row, operator, column, value) {
       return currentValue >= value;
     case "lte":
       return currentValue <= value;
+    case "ilike":
+      return matchesIlike(currentValue, value);
     default:
       return true;
   }
+}
+
+function matchesIlike(currentValue, pattern) {
+  const valueText = String(currentValue ?? "").toLowerCase();
+  const patternText = String(pattern ?? "").toLowerCase();
+
+  if (patternText.startsWith("%") && patternText.endsWith("%")) {
+    return valueText.includes(patternText.slice(1, -1));
+  }
+
+  if (patternText.startsWith("%")) {
+    return valueText.endsWith(patternText.slice(1));
+  }
+
+  if (patternText.endsWith("%")) {
+    return valueText.startsWith(patternText.slice(0, -1));
+  }
+
+  return valueText === patternText;
 }
 
 function applyOrdering(rows, orderBy) {
@@ -494,10 +659,18 @@ function parseSelection(selection) {
 
 function projectRows(parentTable, rows, selection) {
   const parsed = parseSelection(selection);
-  return rows.map((row) => projectRow(parentTable, row, parsed));
+  const relationCache = new Map();
+  return rows.map((row) => projectRow(parentTable, row, parsed, relationCache));
 }
 
-function projectRow(parentTable, row, parsedSelection) {
+function getCachedRows(table, relationCache) {
+  if (!relationCache.has(table)) {
+    relationCache.set(table, readAllRows(table));
+  }
+  return relationCache.get(table);
+}
+
+function projectRow(parentTable, row, parsedSelection, relationCache) {
   const projected = parsedSelection.includeAll
     ? { ...row }
     : parsedSelection.columns.reduce((result, column) => {
@@ -516,7 +689,7 @@ function projectRow(parentTable, row, parsedSelection) {
       continue;
     }
 
-    let relatedRows = readAllRows(relationship.table).filter(
+    let relatedRows = getCachedRows(relationship.table, relationCache).filter(
       (candidate) => candidate[relationship.targetKey] === row[relationship.sourceKey]
     );
 
@@ -525,7 +698,7 @@ function projectRow(parentTable, row, parsedSelection) {
     }
 
     const relatedSelection = parseSelection(relation.columns);
-    const projectedRelated = relatedRows.map((candidate) => projectRow(relationship.table, candidate, relatedSelection));
+    const projectedRelated = relatedRows.map((candidate) => projectRow(relationship.table, candidate, relatedSelection, relationCache));
     projected[relation.alias] = relationship.many ? projectedRelated : projectedRelated[0] || null;
   }
 
@@ -574,9 +747,11 @@ function adjustStockForInvoice(invoice, statusMode) {
     return;
   }
 
-  const lineItems = readAllRows("invoice_items").filter((item) => item.invoice_id === invoice.id && item.item_id);
+  const lineItems = readFilteredRows("invoice_items", [{ type: "eq", column: "invoice_id", value: invoice.id }])
+    .filter((item) => item.item_id);
+  const itemsById = new Map(readAllRows("items").map((item) => [item.id, item]));
   for (const lineItem of lineItems) {
-    const item = readAllRows("items").find((candidate) => candidate.id === lineItem.item_id);
+    const item = itemsById.get(lineItem.item_id);
     if (!item) {
       continue;
     }
@@ -628,22 +803,28 @@ function handleInvoiceMutation(previousRow, nextRow) {
 }
 
 function selectRows(table, request) {
-  let rows = readAllRows(table);
-  rows = applyFilters(rows, request.filters);
+  let rows = readFilteredRows(table, request.filters);
+  const totalCount = rows.length;
   rows = applyOrdering(rows, request.orderBy);
 
-  if (request.limit) {
+  if (request.offset) {
+    rows = rows.slice(request.offset);
+  }
+
+  if (request.limit !== null && request.limit !== undefined) {
     rows = rows.slice(0, request.limit);
   }
 
   const projected = projectRows(table, rows, request.selection);
-  return request.single ? projected[0] || null : projected;
+  return {
+    data: request.single ? projected[0] || null : projected,
+    count: request.count === "exact" ? totalCount : null,
+  };
 }
 
 function mutateRows(table, request) {
   return withTransaction(() => {
-    const currentRows = readAllRows(table);
-    const matchingRows = applyFilters(currentRows, request.filters);
+    const matchingRows = readFilteredRows(table, request.filters);
 
     if (request.action === "insert") {
       const payloads = Array.isArray(request.payload) ? request.payload : [request.payload];
@@ -705,13 +886,16 @@ async function query(request) {
       selection: request.selection || "*",
       filters: request.filters || [],
       orderBy: request.orderBy || null,
-      limit: request.limit || null,
+      limit: request.limit ?? null,
+      offset: request.offset ?? null,
+      count: request.count ?? null,
       single: Boolean(request.single),
       payload: request.payload ? sanitizeValue(request.payload) : null,
     };
 
     if (normalizedRequest.action === "select") {
-      return createResponse(selectRows(table, normalizedRequest));
+      const result = selectRows(table, normalizedRequest);
+      return createResponse(result.data, null, result.count);
     }
 
     return createResponse(mutateRows(table, normalizedRequest));
@@ -935,6 +1119,7 @@ function restoreBackup(filePath) {
     }
     db = new SQL.Database(fs.readFileSync(filePath));
     db.exec(getSchemaSql());
+    runSchemaMigrations();
     saveDatabase();
     return createResponse({ path: filePath });
   } catch (error) {

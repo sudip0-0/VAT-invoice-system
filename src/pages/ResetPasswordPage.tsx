@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { localDb } from '@/integrations/local-db/client';
 
 export default function ResetPasswordPage() {
   const navigate = useNavigate();
@@ -13,7 +13,7 @@ export default function ResetPasswordPage() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    localDb.auth.getSession().then(({ data }) => {
       if (data.session || user) {
         setReady(true);
       } else {
@@ -32,7 +32,7 @@ export default function ResetPasswordPage() {
 
     setError('');
     setLoading(true);
-    const { error } = await supabase.auth.updateUser({ password });
+    const { error } = await localDb.auth.updateUser({ password });
     setLoading(false);
 
     if (error) {
