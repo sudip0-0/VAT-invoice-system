@@ -10,7 +10,7 @@ import {
 } from '@/hooks/useReports';
 import {
   useItemWiseSalesPurchase, useLowStockAlert, useDayBook, useCNDNRegister,
-  useOutstandingReport, useVATReturnSummary, useDailySummary,
+  useOutstandingReport, useVATReturnSummary, useDailySummary, useFiscalSequenceReview,
 } from '@/hooks/useReportsExtra';
 import {
   useTrialBalance, useBalanceSheetSummary, useTopSellingItems, useVATAnnex,
@@ -178,8 +178,9 @@ const REPORT_CATEGORIES: ReportCategory[] = [
     label: '🧾 Tax & Compliance',
     reports: [
       { key: 'vat', label: 'VAT Summary' },
-      { key: 'vat-return', label: 'VAT Return' },
-      { key: 'vat-annex', label: 'VAT Annex' },
+      { key: 'vat-return', label: 'VAT Return (Schedule 10)' },
+      { key: 'vat-annex', label: 'Purchase/Sales Books (Schedule 8/9)' },
+      { key: 'sequence-review', label: 'Fiscal Sequence Review' },
     ],
   },
   {
@@ -303,6 +304,7 @@ export default function ReportsPage() {
           {activeReport === 'item-wise' && <ItemWiseReport dateFrom={dateFrom} dateTo={dateTo} />}
           {activeReport === 'vat' && <VATReport dateFrom={dateFrom} dateTo={dateTo} />}
           {activeReport === 'vat-return' && <VATReturnReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'sequence-review' && <FiscalSequenceReviewReport />}
           {activeReport === 'pnl' && <PnLReport dateFrom={dateFrom} dateTo={dateTo} />}
           {activeReport === 'bill-profit' && <BillProfitReport dateFrom={dateFrom} dateTo={dateTo} />}
           {activeReport === 'item-profit' && <ItemProfitReport dateFrom={dateFrom} dateTo={dateTo} />}
@@ -1266,12 +1268,34 @@ function OutstandingReportView({ dateFrom, dateTo }: { dateFrom: string; dateTo:
 // ───────── VAT Return Summary ─────────
 function VATReturnReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
   const { data, isLoading } = useVATReturnSummary(dateFrom, dateTo);
+  const handleExport = () => {
+    if (!data) return;
+    const rows = [
+      ...data.sections.map((row) => [row.label, String(row.amount), String(row.vat), '']),
+      ...Object.values(data.purchaseBuckets).map((row) => [row.label, String(row.amount), String(row.vat), 'Purchase bucket']),
+      ['VAT Payable / Refundable', '', String(data.netVATPayable), data.refundReason],
+      ...data.paymentDetails.map((payment) => [
+        `Payment ${payment.date_bs}`,
+        String(payment.amount),
+        '',
+        [payment.method, payment.reference, payment.bank_name, payment.cheque_number].filter(Boolean).join(' / '),
+      ]),
+      ...data.accountantReviewPlaceholders.map((placeholder) => ['Accountant Review', '', '', placeholder]),
+    ];
+    exportCSV(['Particulars', 'Amount', 'VAT', 'Details'], rows, `vat-return-schedule-10-${dateFrom}-${dateTo}.csv`);
+  };
 
   if (isLoading) return <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">Loading…</div>;
   if (!data) return <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">No data.</div>;
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-4 max-w-4xl">
+      <div className="flex items-start gap-3">
+        <p className="text-xs text-muted-foreground max-w-2xl">
+          Schedule 10 pre-filing review. Export and review with an accountant before filing; this does not submit or certify a VAT return.
+        </p>
+        <ExportButton onClick={handleExport} disabled={!data.sections.length} />
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         {[
           ['Sales', data.counts.sales_invoice_count],
@@ -1314,11 +1338,102 @@ function VATReturnReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: strin
           </tr></tfoot>
         </table>
       </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          <div className="border-b border-border bg-muted/50 px-4 py-2 text-xs font-semibold text-foreground">Purchase Buckets</div>
+          <table className="w-full text-xs">
+            <tbody>
+              {Object.values(data.purchaseBuckets).map((row) => (
+                <tr key={row.label} className="border-b border-border last:border-0">
+                  <td className="px-4 py-2 text-foreground">{row.label}</td>
+                  <td className="px-4 py-2 text-right text-foreground">{formatNPR(row.amount, { showSymbol: false })}</td>
+                  <td className="px-4 py-2 text-right text-muted-foreground">{row.vat ? formatNPR(row.vat, { showSymbol: false }) : 'â€”'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          <div className="border-b border-border bg-muted/50 px-4 py-2 text-xs font-semibold text-foreground">Voucher / Payment Details</div>
+          {data.paymentDetails.length === 0 ? (
+            <div className="px-4 py-6 text-xs text-muted-foreground">No completed payment records in this period.</div>
+          ) : (
+            <table className="w-full text-xs">
+              <tbody>
+                {data.paymentDetails.slice(0, 8).map((payment, index) => (
+                  <tr key={`${payment.date_bs}-${index}`} className="border-b border-border last:border-0">
+                    <td className="px-4 py-2 text-foreground">{payment.date_bs}</td>
+                    <td className="px-4 py-2 text-muted-foreground capitalize">{payment.method.replace('_', ' ')}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{payment.reference || 'Accountant review'}</td>
+                    <td className="px-4 py-2 text-right text-foreground">{formatNPR(payment.amount, { showSymbol: false })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+      <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+        <div className="text-xs font-semibold text-foreground">Accountant Review Placeholders</div>
+        <div className="grid gap-1.5 text-xs text-muted-foreground">
+          <div>Refund reason: {data.refundReason}</div>
+          {data.accountantReviewPlaceholders.map((placeholder) => <div key={placeholder}>{placeholder}</div>)}
+        </div>
+      </div>
     </div>
   );
 }
 
 // ───────── Daily Summary / Tally Sheet ─────────
+function FiscalSequenceReviewReport() {
+  const { data = [], isLoading } = useFiscalSequenceReview();
+  const handleExport = () => {
+    exportCSV(
+      ['Issue Type', 'Document Type', 'Fiscal Year', 'Serial', 'Invoice #', 'Message'],
+      data.map((issue) => [
+        issue.type,
+        issue.document_type,
+        issue.fiscal_year,
+        issue.serial == null ? '' : String(issue.serial),
+        issue.invoice_number || '',
+        issue.message,
+      ]),
+      'fiscal-sequence-review.csv'
+    );
+  };
+
+  return (
+    <div className="space-y-3 max-w-4xl">
+      <div className="flex items-start gap-3">
+        <p className="text-xs text-muted-foreground max-w-2xl">
+          Pre-filing sequence review for gaps, duplicates, missing fiscal-year metadata, missing serials, and legacy records. This report is review-only and does not renumber documents.
+        </p>
+        <ExportButton onClick={handleExport} disabled={!data.length} />
+      </div>
+      <ReportTable loading={isLoading} empty={!data.length}>
+        <thead><tr className="border-b border-border bg-muted/50">
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Issue</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Fiscal Year</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Serial</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Invoice #</th>
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Review Note</th>
+        </tr></thead>
+        <tbody>{data.map((issue, index) => (
+          <tr key={`${issue.type}-${issue.document_type}-${issue.fiscal_year}-${issue.serial}-${index}`} className="border-b border-border last:border-0">
+            <td className="px-3 py-2 font-medium text-foreground">{issue.type.replace(/_/g, ' ')}</td>
+            <td className="px-3 py-2 text-muted-foreground">{issue.document_type.replace(/_/g, ' ')}</td>
+            <td className="px-3 py-2 text-muted-foreground">{issue.fiscal_year}</td>
+            <td className="px-3 py-2 text-right text-foreground">{issue.serial ?? 'â€”'}</td>
+            <td className="px-3 py-2 text-foreground">{issue.invoice_number || 'â€”'}</td>
+            <td className="px-3 py-2 text-muted-foreground">{issue.message}</td>
+          </tr>
+        ))}</tbody>
+      </ReportTable>
+    </div>
+  );
+}
+
 function DailySummaryReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
   const { data, isLoading } = useDailySummary(dateFrom, dateTo);
   const handleExport = () => { if (!data?.rows.length) return; exportCSV(['Date (BS)', 'Date (AD)', 'Sales', 'Purchases', 'Payments In', 'Payments Out', 'Invoices', 'Payments'], data.rows.map(r => [r.date_bs, r.date_ad, String(r.total_sales), String(r.total_purchases), String(r.total_payments_in), String(r.total_payments_out), String(r.invoice_count), String(r.payment_count)]), `daily-summary-${dateFrom}-${dateTo}.csv`); };
@@ -1537,7 +1652,12 @@ function VATAnnexReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string
         </Tabs>
         <ExportButton onClick={handleExport} disabled={!data?.rows.length} />
       </div>
-      <h3 className="text-sm font-semibold text-foreground">{annexLabel}</h3>
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">{annexLabel}</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {annexType === 'sales' ? 'Monthly Sales Book / Schedule 9 review' : 'Monthly Purchase Book / Schedule 8 review'} | Period: {dateFrom} to {dateTo} | Taxpayer PAN: {data?.rows[0]?.taxpayer_pan || 'Accountant review'} | Count: {data?.rows.length || 0}
+        </p>
+      </div>
       <ReportTable loading={isLoading} empty={!data?.rows.length}>
         <thead><tr className="border-b border-border bg-muted/50">
           <th className="px-3 py-2 text-left font-medium text-muted-foreground">SN</th>

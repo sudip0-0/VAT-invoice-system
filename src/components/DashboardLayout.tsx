@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, ShoppingCart, Package, Users,
   BarChart3, Settings, ChevronLeft, ChevronRight, Receipt,
-  Building2, Bell, Search, Menu, LogOut, ArrowLeftRight, Wallet
+  Building2, Bell, Search, Menu, LogOut, ArrowLeftRight, Wallet, FilePlus2
 } from 'lucide-react';
 import { todayBS, formatBS } from '@/lib/bs-calendar';
 import { useAuth } from '@/contexts/AuthContext';
@@ -16,6 +16,7 @@ const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
   { label: 'Sales', icon: FileText, path: '/invoices' },
   { label: 'Purchases', icon: ShoppingCart, path: '/purchases' },
+  { label: 'CN / DN', icon: FilePlus2, path: '/correction-notes' },
   { label: 'Quotations', icon: Receipt, path: '/quotations' },
   { label: 'Inventory', icon: Package, path: '/inventory' },
   { label: 'Stock Movements', icon: ArrowLeftRight, path: '/inventory/movements' },

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Printer, CreditCard, Pencil, Ban, FileOutput, Share2 } from 'lucide-react';
+import { ArrowLeft, Printer, CreditCard, Pencil, Ban, FileOutput, Share2, FilePlus2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -13,7 +13,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useInvoiceDetail, useInvoiceEvents, useInvoicePayments, useInvoices } from '@/hooks/useInvoices';
+import { useInvoiceAuditVerification, useInvoiceDetail, useInvoiceEvents, useInvoicePayments, useInvoices } from '@/hooks/useInvoices';
 import { useBusiness } from '@/contexts/BusinessContext';
 import { useToast } from '@/hooks/use-toast';
 import { formatNPR } from '@/lib/nepal-format';
@@ -34,13 +34,17 @@ export default function InvoiceDetailPage() {
   const { data: invoice, isLoading } = useInvoiceDetail(id);
   const { payments, recordPayment } = useInvoicePayments(id);
   const { data: invoiceEvents = [] } = useInvoiceEvents(id);
-  const { cancelInvoice, createInvoice, recordInvoicePrint } = useInvoices();
+  const { data: auditVerification } = useInvoiceAuditVerification(id);
+  const { cancelInvoice, createCorrectionNote, createInvoice, recordInvoiceExport, recordInvoicePrint } = useInvoices();
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
   const [printSize, setPrintSize] = useState<"a4" | "a5">("a5");
   const [showPrint, setShowPrint] = useState(false);
+  const [correctionOpen, setCorrectionOpen] = useState(false);
+  const [correctionType, setCorrectionType] = useState<'credit' | 'debit'>('credit');
+  const [correctionReason, setCorrectionReason] = useState('');
 
   const handlePrint = () => {
     if (id) {
@@ -93,6 +97,22 @@ export default function InvoiceDetailPage() {
     }
   };
 
+  const handleCorrectionNote = async () => {
+    try {
+      const newId = await createCorrectionNote.mutateAsync({
+        originalInvoiceId: id!,
+        noteType: correctionType,
+        reason: correctionReason,
+      });
+      toast({ title: correctionType === 'credit' ? 'Draft credit note created' : 'Draft debit note created' });
+      setCorrectionOpen(false);
+      setCorrectionReason('');
+      navigate(`/invoices/${newId}/edit`);
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    }
+  };
+
   useEffect(() => {
     if (searchParams.get('print') !== '1') return;
     setPrintOptionsOpen(true);
@@ -114,9 +134,15 @@ export default function InvoiceDetailPage() {
   const isCancelled = invoice.status === 'cancelled';
   const canEdit = canDirectlyEditInvoice(invoice);
   const isQuotation = invoice.type === 'quotation';
+  const isCreditNote = invoice.type === 'sale_return';
+  const isDebitNote = invoice.type === 'purchase_return';
+  const isCorrectionNote = isCreditNote || isDebitNote;
   const backPath = isQuotation ? '/quotations' : '/invoices';
 
   const handleWhatsAppShare = () => {
+    if (id) {
+      recordInvoiceExport.mutate({ id, format: 'whatsapp_share' });
+    }
     const partyName = displayParty.name || 'Customer';
     const typeName = invoice.type === 'quotation' ? 'Quotation' : invoice.type === 'sale' ? 'Invoice' : 'Purchase Bill';
     const lines = [
@@ -221,6 +247,19 @@ export default function InvoiceDetailPage() {
               <CreditCard className="h-3.5 w-3.5" /> Record Payment
             </Button>
           )}
+          {!isCancelled && !isQuotation && !isCorrectionNote && invoice.status !== 'draft' && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 text-xs"
+              onClick={() => {
+                setCorrectionType(invoice.type === 'purchase' ? 'debit' : 'credit');
+                setCorrectionOpen(true);
+              }}
+            >
+              <FilePlus2 className="h-3.5 w-3.5" /> CN / DN
+            </Button>
+          )}
           {!isCancelled && (
             <Button size="sm" variant="outline" className="gap-1.5 text-xs text-destructive hover:text-destructive" onClick={() => setCancelOpen(true)}>
               <Ban className="h-3.5 w-3.5" /> Cancel
@@ -247,7 +286,7 @@ export default function InvoiceDetailPage() {
           </div>
           <div className="text-right">
             <h3 className="text-sm font-semibold text-foreground">
-              {invoice.type === 'quotation' ? 'QUOTATION' : invoice.type === 'sale' ? 'SALES INVOICE' : 'PURCHASE BILL'}
+              {invoice.type === 'quotation' ? 'QUOTATION' : isCreditNote ? 'CREDIT NOTE' : isDebitNote ? 'DEBIT NOTE' : invoice.type === 'sale' ? 'SALES INVOICE' : 'PURCHASE BILL'}
               {invoice.is_vat_invoice && ' (VAT)'}
             </h3>
             <p className="text-sm font-mono font-bold text-foreground">{invoice.invoice_number}</p>
@@ -255,6 +294,7 @@ export default function InvoiceDetailPage() {
             <p className="text-xs text-muted-foreground">Date (AD): {new Date(invoice.issued_date_ad).toLocaleDateString()}</p>
             {invoice.due_date_bs && <p className="text-xs text-muted-foreground">Due: {invoice.due_date_bs}</p>}
             {invoice.vat_period && <p className="text-xs text-muted-foreground">VAT Period: {invoice.vat_period}</p>}
+            {invoice.original_invoice_number && <p className="text-xs text-muted-foreground">Original Invoice: {invoice.original_invoice_number}</p>}
             {invoice.print_count > 0 && <p className="text-xs text-muted-foreground">Printed: {invoice.print_count} time{invoice.print_count === 1 ? '' : 's'}</p>}
             {isCancelled && <p className="text-xs font-bold text-destructive mt-1">CANCELLED</p>}
           </div>
@@ -368,6 +408,13 @@ export default function InvoiceDetailPage() {
           </div>
         )}
 
+        {isCorrectionNote && invoice.correction_reason && (
+          <div className="mt-4 pt-3 border-t border-border">
+            <p className="text-[10px] uppercase text-muted-foreground font-medium mb-1">Correction Reason</p>
+            <p className="text-xs text-foreground">{invoice.correction_reason}</p>
+          </div>
+        )}
+
         {isCancelled && invoice.cancellation_reason && (
           <div className="mt-4 pt-3 border-t border-border">
             <p className="text-[10px] uppercase text-muted-foreground font-medium mb-1">Cancellation Reason</p>
@@ -421,7 +468,14 @@ export default function InvoiceDetailPage() {
 
       {invoiceEvents.length > 0 && (
         <div className="rounded-lg border border-border bg-card p-4 print:hidden">
-          <h3 className="text-sm font-semibold text-foreground mb-3">Invoice Audit Log</h3>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-foreground">Invoice Audit Log</h3>
+            {auditVerification && (
+              <span className={`text-[11px] font-medium ${auditVerification.valid ? 'text-success' : 'text-destructive'}`}>
+                Hash chain: {auditVerification.valid ? 'verified' : 'broken'}
+              </span>
+            )}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -429,6 +483,7 @@ export default function InvoiceDetailPage() {
                   <th className="px-3 py-2 text-left font-medium text-muted-foreground">Time</th>
                   <th className="px-3 py-2 text-left font-medium text-muted-foreground">Action</th>
                   <th className="px-3 py-2 text-left font-medium text-muted-foreground">User</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Hash</th>
                   <th className="px-3 py-2 text-left font-medium text-muted-foreground">Details</th>
                 </tr>
               </thead>
@@ -438,6 +493,7 @@ export default function InvoiceDetailPage() {
                     <td className="px-3 py-2 text-foreground">{new Date(event.created_at).toLocaleString()}</td>
                     <td className="px-3 py-2 font-medium text-foreground capitalize">{event.action.replace(/_/g, ' ')}</td>
                     <td className="px-3 py-2 text-muted-foreground">{event.user_id || 'System'}</td>
+                    <td className="px-3 py-2 font-mono text-muted-foreground">{event.event_hash ? event.event_hash.slice(0, 12) : 'legacy'}</td>
                     <td className="px-3 py-2 text-muted-foreground">{event.details || '—'}</td>
                   </tr>
                 ))}
@@ -497,6 +553,49 @@ export default function InvoiceDetailPage() {
             </Button>
             <Button className="gap-1.5" onClick={handlePrint}>
               <Printer className="h-4 w-4" /> Print / PDF
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={correctionOpen} onOpenChange={setCorrectionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Correction Note</DialogTitle>
+            <DialogDescription>
+              This creates a draft note that references {invoice.invoice_number}; edit the note lines before issuing it. The issued invoice stays unchanged.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <RadioGroup value={correctionType} onValueChange={(value) => setCorrectionType(value as 'credit' | 'debit')} className="grid gap-2">
+              <Label className="flex cursor-pointer items-center gap-3 rounded-md border border-border p-3">
+                <RadioGroupItem value="credit" />
+                <span>
+                  <span className="block text-sm font-semibold">Credit Note</span>
+                  <span className="block text-xs text-muted-foreground">Sales return or downward sales adjustment.</span>
+                </span>
+              </Label>
+              <Label className="flex cursor-pointer items-center gap-3 rounded-md border border-border p-3">
+                <RadioGroupItem value="debit" />
+                <span>
+                  <span className="block text-sm font-semibold">Debit Note</span>
+                  <span className="block text-xs text-muted-foreground">Purchase return or accountant-approved adjustment.</span>
+                </span>
+              </Label>
+            </RadioGroup>
+            <div className="space-y-2">
+              <Label className="text-xs">Reason *</Label>
+              <Textarea
+                value={correctionReason}
+                onChange={(event) => setCorrectionReason(event.target.value)}
+                placeholder="Return, rate correction, discount correction, damaged goods, or accountant-approved reason..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCorrectionOpen(false)}>Cancel</Button>
+            <Button onClick={handleCorrectionNote} disabled={!correctionReason.trim() || createCorrectionNote.isPending}>
+              Create Note
             </Button>
           </DialogFooter>
         </DialogContent>

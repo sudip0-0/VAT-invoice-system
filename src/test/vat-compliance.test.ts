@@ -65,4 +65,10 @@ describe("VAT compliance helpers", () => {
     expect(canDirectlyEditInvoice({ type: "sale", status: "paid", is_vat_invoice: true })).toBe(false);
     expect(canDirectlyEditInvoice({ type: "sale", status: "issued", is_vat_invoice: false })).toBe(true);
   });
+
+  it("allows draft correction-note line review but locks issued correction notes", () => {
+    expect(canDirectlyEditInvoice({ type: "sale_return", status: "draft", is_vat_invoice: true })).toBe(true);
+    expect(canDirectlyEditInvoice({ type: "sale_return", status: "issued", is_vat_invoice: true })).toBe(false);
+    expect(canDirectlyEditInvoice({ type: "purchase_return", status: "issued", is_vat_invoice: false })).toBe(false);
+  });
 });

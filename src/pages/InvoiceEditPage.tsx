@@ -23,7 +23,7 @@ import {
   type CashCustomerDetails,
   emptyCashCustomerDetails,
 } from '@/lib/cash-customer';
-import { STATUTORY_VAT_RATE, calculateVATLine, canDirectlyEditInvoice, canIssueVATInvoice, getVATRateForTaxType, hasRequiredBuyerPan, type LineTaxType } from '@/lib/vat-compliance';
+import { STATUTORY_VAT_RATE, calculateVATLine, canDirectlyEditInvoice, canIssueVATInvoice, getVATRateForTaxType, hasRequiredBuyerPan, reconcileLineTotals, roundMoney, type LineTaxType } from '@/lib/vat-compliance';
 
 const LINE_TAX_TYPES: Array<{ value: LineTaxType; label: string }> = [
   { value: 'vat_13', label: 'VAT 13%' },
@@ -49,6 +49,8 @@ interface LineItem {
   total_amount: number;
   is_custom: boolean;
 }
+
+type EditableDocumentType = 'sale' | 'purchase' | 'sale_return' | 'purchase_return';
 
 function calcLine(line: LineItem): LineItem {
   const totals = calculateVATLine(line);
@@ -79,7 +81,7 @@ export default function InvoiceEditPage() {
   const { items: inventoryItems } = useItems();
 
   const [initialized, setInitialized] = useState(false);
-  const [invoiceType, setInvoiceType] = useState<'sale' | 'purchase'>('sale');
+  const [invoiceType, setInvoiceType] = useState<EditableDocumentType>('sale');
   const [partyId, setPartyId] = useState('');
   const [cashCustomerDetails, setCashCustomerDetails] = useState<CashCustomerDetails>(emptyCashCustomerDetails());
   const [cashCustomerOpen, setCashCustomerOpen] = useState(false);
@@ -94,8 +96,9 @@ export default function InvoiceEditPage() {
   // Populate form from invoice data
   useEffect(() => {
     if (invoice && !initialized) {
-      setInvoiceType(invoice.type as 'sale' | 'purchase');
-      setPartyId(invoice.type === 'sale' && !invoice.customer_id ? CASH_CUSTOMER_ID : invoice.customer_id || invoice.vendor_id || '');
+      setInvoiceType(invoice.type as EditableDocumentType);
+      const isSalesSide = invoice.type === 'sale' || invoice.type === 'sale_return';
+      setPartyId(isSalesSide && !invoice.customer_id ? CASH_CUSTOMER_ID : invoice.customer_id || invoice.vendor_id || '');
       setCashCustomerDetails({
         name: invoice.buyer_name || '',
         panNumber: invoice.buyer_pan || '',
@@ -137,7 +140,7 @@ export default function InvoiceEditPage() {
 
   const filteredParties = useMemo(() => {
     return parties.filter((p) => {
-      if (invoiceType === 'sale') return p.type === 'customer' || p.type === 'both';
+      if (invoiceType === 'sale' || invoiceType === 'sale_return') return p.type === 'customer' || p.type === 'both';
       return p.type === 'vendor' || p.type === 'both';
     });
   }, [parties, invoiceType]);
@@ -149,7 +152,7 @@ export default function InvoiceEditPage() {
   const selectItem = useCallback((key: string, itemId: string) => {
     const item = inventoryItems.find((i) => i.id === itemId);
     if (!item) return;
-    const rate = invoiceType === 'sale' ? item.sale_price : (item.purchase_price ?? item.sale_price);
+    const rate = invoiceType === 'sale' || invoiceType === 'sale_return' ? item.sale_price : (item.purchase_price ?? item.sale_price);
     updateLine(key, { item_id: itemId, hsn_code: item.hsn_code || null, name: item.name, unit: item.unit, rate, tax_type: isVat ? 'vat_13' : 'non_taxable', vat_rate: isVat ? STATUTORY_VAT_RATE : 0, is_custom: false });
   }, [inventoryItems, invoiceType, isVat, updateLine]);
 
@@ -157,12 +160,15 @@ export default function InvoiceEditPage() {
   const removeLine = (key: string) => setLines((prev) => prev.length > 1 ? prev.filter((l) => l.key !== key) : prev);
 
   const totals = useMemo(() => {
-    const subTotal = lines.reduce((s, l) => s + l.quantity * l.rate, 0);
-    const discountAmount = lines.reduce((s, l) => s + l.discount_amt, 0);
-    const taxableAmount = lines.reduce((s, l) => s + l.taxable_amount, 0);
-    const vatAmount = lines.reduce((s, l) => s + l.vat_amount, 0);
-    const totalAmount = lines.reduce((s, l) => s + l.total_amount, 0);
-    return { subTotal, discountAmount, taxableAmount, vatAmount, totalAmount };
+    const subTotal = roundMoney(lines.reduce((s, l) => s + l.quantity * l.rate, 0));
+    const reconciled = reconcileLineTotals(lines);
+    return {
+      subTotal,
+      discountAmount: reconciled.discount_amount,
+      taxableAmount: reconciled.taxable_amount,
+      vatAmount: reconciled.vat_amount,
+      totalAmount: reconciled.total_amount,
+    };
   }, [lines]);
 
   const issuedBs = issuedDateBs ? formatBSShort(issuedDateBs) : '';
@@ -190,7 +196,9 @@ export default function InvoiceEditPage() {
 
     const validLines = lines.filter((l) => l.name.trim());
     const selectedParty = parties.find((p) => p.id === partyId);
-    const isCashCustomer = invoiceType === 'sale' && partyId === CASH_CUSTOMER_ID;
+    const isSalesSide = invoiceType === 'sale' || invoiceType === 'sale_return';
+    const isPurchaseSide = invoiceType === 'purchase' || invoiceType === 'purchase_return';
+    const isCashCustomer = isSalesSide && partyId === CASH_CUSTOMER_ID;
     const buyerPan = isCashCustomer ? cashCustomerDetails.panNumber || null : selectedParty?.pan_number || null;
     if (!hasRequiredBuyerPan(invoiceType, status, isVat, buyerPan)) {
       toast({ title: 'Buyer PAN/VAT number is required to issue VAT sales invoices', variant: 'destructive' });
@@ -205,8 +213,8 @@ export default function InvoiceEditPage() {
         invoice: {
           type: invoiceType,
           status,
-          customer_id: invoiceType === 'sale' && !isCashCustomer ? partyId : null,
-          vendor_id: invoiceType === 'purchase' ? partyId : null,
+          customer_id: isSalesSide && !isCashCustomer ? partyId : null,
+          vendor_id: isPurchaseSide ? partyId : null,
           buyer_name: isCashCustomer ? cashCustomerDetails.name || CASH_CUSTOMER_NAME : selectedParty?.name || null,
           buyer_pan: buyerPan,
           buyer_phone: isCashCustomer ? cashCustomerDetails.phone || null : selectedParty?.phone || null,
@@ -242,7 +250,7 @@ export default function InvoiceEditPage() {
         })),
       });
       toast({ title: `Invoice updated` });
-      if (status === 'issued' && invoiceType === 'sale') {
+      if (status === 'issued' && (invoiceType === 'sale' || invoiceType === 'sale_return' || invoiceType === 'purchase_return')) {
         navigate(`/invoices/${id}?print=1`);
       } else {
         navigate(`/invoices/${id}`);
@@ -264,7 +272,7 @@ export default function InvoiceEditPage() {
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(`/invoices/${id}`)}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-xl font-bold text-foreground">Edit Invoice</h1>
+        <h1 className="text-xl font-bold text-foreground">{invoice.type === 'sale_return' ? 'Edit Credit Note' : invoice.type === 'purchase_return' ? 'Edit Debit Note' : 'Edit Invoice'}</h1>
         <span className="ml-auto text-sm font-mono text-muted-foreground">{invoice.invoice_number}</span>
       </div>
 
@@ -273,20 +281,22 @@ export default function InvoiceEditPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div>
             <Label className="text-xs">Type</Label>
-            <Select value={invoiceType} onValueChange={(v: 'sale' | 'purchase') => { setInvoiceType(v); setPartyId(''); }}>
+            <Select value={invoiceType} onValueChange={(v: EditableDocumentType) => { setInvoiceType(v); setPartyId(''); }} disabled={invoice.type === 'sale_return' || invoice.type === 'purchase_return'}>
               <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="sale">Sale</SelectItem>
                 <SelectItem value="purchase">Purchase</SelectItem>
+                <SelectItem value="sale_return">Credit Note</SelectItem>
+                <SelectItem value="purchase_return">Debit Note</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div>
-            <Label className="text-xs">{invoiceType === 'sale' ? 'Customer' : 'Vendor'} *</Label>
+            <Label className="text-xs">{invoiceType === 'sale' || invoiceType === 'sale_return' ? 'Customer' : 'Vendor'} *</Label>
             <PartyCombobox
               parties={filteredParties}
               value={partyId}
-              mode={invoiceType === 'sale' ? 'customer' : 'vendor'}
+              mode={invoiceType === 'sale' || invoiceType === 'sale_return' ? 'customer' : 'vendor'}
               onSelect={handlePartySelect}
             />
           </div>
@@ -357,7 +367,7 @@ export default function InvoiceEditPage() {
                       items={inventoryItems}
                       value={line.item_id}
                       displayName={line.name}
-                      mode={invoiceType === 'purchase' ? 'purchase' : 'sale'}
+                      mode={invoiceType === 'purchase' || invoiceType === 'purchase_return' ? 'purchase' : 'sale'}
                       onSelect={(itemId) => selectItem(line.key, itemId)}
                       onCustom={() => updateLine(line.key, { item_id: null, hsn_code: null, name: '', is_custom: true })}
                     />
@@ -456,7 +466,7 @@ export default function InvoiceEditPage() {
           Save Draft
         </Button>
         <Button size="sm" onClick={() => handleSave('issued')} disabled={updateInvoice.isPending}>
-          Save & Issue
+          {invoice.type === 'sale_return' ? 'Issue Credit Note' : invoice.type === 'purchase_return' ? 'Issue Debit Note' : 'Save & Issue'}
         </Button>
       </div>
 

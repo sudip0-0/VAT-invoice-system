@@ -1,7 +1,12 @@
 export interface VATReturnInvoiceLineInput {
   tax_type?: string | null;
+  taxable_amount?: number;
+  vat_amount?: number;
   total_amount: number;
+  purchase_bucket?: VATPurchaseBucket | null;
 }
+
+export type VATPurchaseBucket = "regular" | "import" | "capitalized";
 
 export interface VATReturnInvoiceInput {
   type: string;
@@ -9,6 +14,7 @@ export interface VATReturnInvoiceInput {
   taxable_amount: number;
   vat_amount: number;
   total_amount: number;
+  purchase_bucket?: VATPurchaseBucket | null;
   invoice_items?: VATReturnInvoiceLineInput[] | null;
 }
 
@@ -18,17 +24,38 @@ export interface VATReturnRow {
   vat: number;
 }
 
+export interface VATReturnPaymentDetail {
+  date_bs: string;
+  method: string;
+  reference: string | null;
+  amount: number;
+  bank_name?: string | null;
+  cheque_number?: string | null;
+}
+
 export interface VATReturnDocumentCounts {
   sales_invoice_count: number;
   purchase_invoice_count: number;
   credit_note_count: number;
   debit_note_count: number;
+  vat_sales_invoice_count: number;
+  vat_purchase_invoice_count: number;
   total_document_count: number;
+}
+
+export interface VATReturnPurchaseBuckets {
+  local_taxable_purchase: VATReturnRow;
+  import_taxable_purchase: VATReturnRow;
+  capitalized_taxable_purchase: VATReturnRow;
 }
 
 export interface VATReturnSummary {
   sections: VATReturnRow[];
   counts: VATReturnDocumentCounts;
+  purchaseBuckets: VATReturnPurchaseBuckets;
+  paymentDetails: VATReturnPaymentDetail[];
+  refundReason: string;
+  accountantReviewPlaceholders: string[];
   netVATPayable: number;
 }
 
@@ -40,16 +67,26 @@ function exemptAmountForInvoice(invoice: VATReturnInvoiceInput): number {
     .reduce((sum, item) => sum + Number(item.total_amount), 0);
 }
 
-export function calculateVATReturnSummary(invoices: VATReturnInvoiceInput[]): VATReturnSummary {
+export function calculateVATReturnSummary(
+  invoices: VATReturnInvoiceInput[],
+  paymentDetails: VATReturnPaymentDetail[] = []
+): VATReturnSummary {
   let salesTaxable = 0, salesVAT = 0, salesExempt = 0;
   let purchaseTaxable = 0, purchaseVAT = 0, purchaseExempt = 0;
   let saleReturnTaxable = 0, saleReturnVAT = 0;
   let purchaseReturnTaxable = 0, purchaseReturnVAT = 0;
+  const purchaseBuckets: VATReturnPurchaseBuckets = {
+    local_taxable_purchase: { label: "Local Taxable Purchases", amount: 0, vat: 0 },
+    import_taxable_purchase: { label: "Taxable Imports", amount: 0, vat: 0 },
+    capitalized_taxable_purchase: { label: "Capitalized Taxable Purchases", amount: 0, vat: 0 },
+  };
   const counts: VATReturnDocumentCounts = {
     sales_invoice_count: 0,
     purchase_invoice_count: 0,
     credit_note_count: 0,
     debit_note_count: 0,
+    vat_sales_invoice_count: 0,
+    vat_purchase_invoice_count: 0,
     total_document_count: 0,
   };
 
@@ -63,11 +100,24 @@ export function calculateVATReturnSummary(invoices: VATReturnInvoiceInput[]): VA
       salesVAT += vat;
       salesExempt += exempt;
       counts.sales_invoice_count += 1;
+      if (inv.is_vat_invoice) counts.vat_sales_invoice_count += 1;
     } else if (inv.type === "purchase") {
       purchaseTaxable += taxable;
       purchaseVAT += vat;
       purchaseExempt += exempt;
       counts.purchase_invoice_count += 1;
+      if (inv.is_vat_invoice) counts.vat_purchase_invoice_count += 1;
+      const bucket = inv.purchase_bucket || "regular";
+      if (bucket === "import") {
+        purchaseBuckets.import_taxable_purchase.amount += taxable;
+        purchaseBuckets.import_taxable_purchase.vat += vat;
+      } else if (bucket === "capitalized") {
+        purchaseBuckets.capitalized_taxable_purchase.amount += taxable;
+        purchaseBuckets.capitalized_taxable_purchase.vat += vat;
+      } else {
+        purchaseBuckets.local_taxable_purchase.amount += taxable;
+        purchaseBuckets.local_taxable_purchase.vat += vat;
+      }
     } else if (inv.type === "sale_return") {
       saleReturnTaxable += taxable;
       saleReturnVAT += vat;
@@ -90,6 +140,7 @@ export function calculateVATReturnSummary(invoices: VATReturnInvoiceInput[]): VA
   const netPurchaseTaxable = purchaseTaxable - purchaseReturnTaxable;
   const netPurchaseVAT = purchaseVAT - purchaseReturnVAT;
   const netVATPayable = netSalesVAT - netPurchaseVAT;
+  const refundReason = netVATPayable < 0 ? "Accountant review required before claiming refund." : "Not applicable";
 
   return {
     sections: [
@@ -103,6 +154,15 @@ export function calculateVATReturnSummary(invoices: VATReturnInvoiceInput[]): VA
       { label: "Net Taxable Purchases", amount: netPurchaseTaxable, vat: netPurchaseVAT },
     ],
     counts,
+    purchaseBuckets,
+    paymentDetails,
+    refundReason,
+    accountantReviewPlaceholders: [
+      "Payment voucher submission details require accountant review before filing.",
+      "Import and capitalized purchase buckets are only as accurate as captured document metadata.",
+      "Refund reason must be reviewed when VAT is refundable.",
+      "Accountant-reviewed filing sign-off is not stored in this app.",
+    ],
     netVATPayable,
   };
 }

@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
-import { calculateVATReturnSummary } from '@/lib/vat-return';
+import { calculateVATReturnSummary, type VATReturnPaymentDetail } from '@/lib/vat-return';
+import { analyzeFiscalSequences } from '@/lib/fiscal-sequence-review';
 export type { VATReturnRow } from '@/lib/vat-return';
 
 // ── Item-wise Sales/Purchase ──
@@ -200,8 +201,12 @@ export function useDayBook(dateFrom: string, dateTo: string) {
 export interface CNDNRow {
   date_bs: string;
   invoice_number: string;
+  original_invoice_number: string;
+  fiscal_year: string;
   party_name: string;
   type: string;
+  taxable_amount: number;
+  vat_amount: number;
   total_amount: number;
   status: string;
 }
@@ -215,7 +220,7 @@ export function useCNDNRegister(dateFrom: string, dateTo: string) {
     queryFn: async () => {
       const { data, error } = await localDb
         .from('invoices')
-        .select('invoice_number, type, issued_date_bs, buyer_name, total_amount, status, customer:parties!invoices_customer_id_fkey(name), vendor:parties!invoices_vendor_id_fkey(name)')
+        .select('invoice_number, original_invoice_number, fiscal_year, type, issued_date_bs, buyer_name, taxable_amount, vat_amount, total_amount, status, customer:parties!invoices_customer_id_fkey(name), vendor:parties!invoices_vendor_id_fkey(name)')
         .eq('business_id', business!.id)
         .is('deleted_at', null)
         .in('type', ['sale_return', 'purchase_return'])
@@ -227,8 +232,12 @@ export function useCNDNRegister(dateFrom: string, dateTo: string) {
       const rows: CNDNRow[] = (data || []).map((inv: any) => ({
         date_bs: inv.issued_date_bs,
         invoice_number: inv.invoice_number,
+        original_invoice_number: inv.original_invoice_number || 'Accountant review',
+        fiscal_year: inv.fiscal_year || 'Accountant review',
         party_name: inv.buyer_name || inv.customer?.name || inv.vendor?.name || '—',
         type: inv.type === 'sale_return' ? 'Credit Note' : 'Debit Note',
+        taxable_amount: Number(inv.taxable_amount),
+        vat_amount: Number(inv.vat_amount),
         total_amount: Number(inv.total_amount),
         status: inv.status,
       }));
@@ -313,17 +322,37 @@ export function useVATReturnSummary(dateFrom: string, dateTo: string) {
     queryKey: ['report-vat-return', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const { data, error } = await localDb
-        .from('invoices')
-        .select('type, is_vat_invoice, taxable_amount, vat_amount, total_amount, invoice_items(tax_type, total_amount)')
-        .eq('business_id', business!.id)
-        .is('deleted_at', null)
-        .neq('status', 'cancelled')
-        .gte('issued_date_ad', dateFrom)
-        .lte('issued_date_ad', dateTo);
+      const [{ data, error }, { data: payments, error: paymentError }] = await Promise.all([
+        localDb
+          .from('invoices')
+          .select('type, is_vat_invoice, taxable_amount, vat_amount, total_amount, invoice_items(tax_type, total_amount)')
+          .eq('business_id', business!.id)
+          .is('deleted_at', null)
+          .neq('status', 'cancelled')
+          .gte('issued_date_ad', dateFrom)
+          .lte('issued_date_ad', dateTo),
+        localDb
+          .from('payments')
+          .select('payment_date_bs, method, reference, amount, bank_name, cheque_number')
+          .eq('business_id', business!.id)
+          .eq('status', 'completed')
+          .gte('payment_date_ad', dateFrom)
+          .lte('payment_date_ad', dateTo)
+          .order('payment_date_ad'),
+      ]);
       if (error) throw error;
+      if (paymentError) throw paymentError;
 
-      return calculateVATReturnSummary((data || []) as any);
+      const paymentDetails: VATReturnPaymentDetail[] = (payments || []).map((payment: any) => ({
+        date_bs: payment.payment_date_bs,
+        method: payment.method,
+        reference: payment.reference || null,
+        amount: Number(payment.amount),
+        bank_name: payment.bank_name || null,
+        cheque_number: payment.cheque_number || null,
+      }));
+
+      return calculateVATReturnSummary((data || []) as any, paymentDetails);
     },
   });
 }
@@ -394,6 +423,25 @@ export function useDailySummary(dateFrom: string, dateTo: string) {
       }), { total_sales: 0, total_purchases: 0, total_payments_in: 0, total_payments_out: 0, invoice_count: 0, payment_count: 0 });
 
       return { rows, totals };
+    },
+  });
+}
+
+export function useFiscalSequenceReview() {
+  const { business } = useBusiness();
+
+  return useQuery({
+    queryKey: ['report-fiscal-sequence-review', business?.id],
+    enabled: !!business?.id,
+    queryFn: async () => {
+      const { data, error } = await localDb
+        .from('invoices')
+        .select('id, type, invoice_number, fiscal_year, document_serial')
+        .eq('business_id', business!.id)
+        .is('deleted_at', null)
+        .in('type', ['sale', 'purchase', 'quotation', 'sale_return', 'purchase_return']);
+      if (error) throw error;
+      return analyzeFiscalSequences(data || []);
     },
   });
 }

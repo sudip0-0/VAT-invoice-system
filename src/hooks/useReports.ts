@@ -189,9 +189,15 @@ export function useVATSummary(dateFrom: string, dateTo: string) {
         if (inv.type === 'sale') {
           existing.sales_taxable += Number(inv.taxable_amount);
           existing.sales_vat += Number(inv.vat_amount);
+        } else if (inv.type === 'sale_return') {
+          existing.sales_taxable -= Number(inv.taxable_amount);
+          existing.sales_vat -= Number(inv.vat_amount);
         } else if (inv.type === 'purchase') {
           existing.purchase_taxable += Number(inv.taxable_amount);
           existing.purchase_vat += Number(inv.vat_amount);
+        } else if (inv.type === 'purchase_return') {
+          existing.purchase_taxable -= Number(inv.taxable_amount);
+          existing.purchase_vat -= Number(inv.vat_amount);
         }
         existing.net_vat = existing.sales_vat - existing.purchase_vat;
         periodMap.set(period, existing);

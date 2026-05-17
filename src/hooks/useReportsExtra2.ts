@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
+import { buildVATBookRows, type VATBookRow } from '@/lib/vat-books';
 
 // ── Trial Balance ──
 
@@ -258,21 +259,7 @@ export function useTopSellingItems(dateFrom: string, dateTo: string, limit = 20)
 
 // ── VAT Annex Reports (Nepal IRD Annex 1–5) ──
 
-export interface VATAnnexRow {
-  sn: number;
-  invoice_number: string;
-  document_serial: number | null;
-  date_bs: string;
-  fiscal_year: string;
-  vat_period: string;
-  taxpayer_pan: string;
-  buyer_pan: string;
-  buyer_name: string;
-  total_sales: number;
-  exempt_sales: number;
-  taxable_amount: number;
-  vat_amount: number;
-}
+export type VATAnnexRow = VATBookRow;
 
 export function useVATAnnex(dateFrom: string, dateTo: string, annexType: 'sales' | 'purchases') {
   const { business } = useBusiness();
@@ -294,42 +281,7 @@ export function useVATAnnex(dateFrom: string, dateTo: string, annexType: 'sales'
         .order('issued_date_ad');
       if (error) throw error;
 
-      const rows: VATAnnexRow[] = (data || []).map((inv: any, idx: number) => {
-        const party = annexType === 'sales' ? inv.customer : inv.vendor;
-        const pan = inv.buyer_pan || party?.pan_number || '';
-        const totalAmt = Number(inv.total_amount);
-        const taxable = Number(inv.taxable_amount);
-        const vat = Number(inv.vat_amount);
-        const exemptLines = (inv.invoice_items || [])
-          .filter((item: any) => item.tax_type === 'exempt' || item.tax_type === 'non_taxable')
-          .reduce((sum: number, item: any) => sum + Number(item.total_amount), 0);
-        const exempt = inv.is_vat_invoice ? exemptLines : totalAmt;
-
-        return {
-          sn: idx + 1,
-          invoice_number: inv.invoice_number,
-          document_serial: inv.document_serial,
-          date_bs: inv.issued_date_bs,
-          fiscal_year: inv.fiscal_year || 'Accountant review',
-          vat_period: inv.vat_period || 'Accountant review',
-          taxpayer_pan: business?.pan_number || '',
-          buyer_pan: pan,
-          buyer_name: inv.buyer_name || party?.name || '—',
-          total_sales: totalAmt,
-          exempt_sales: exempt,
-          taxable_amount: taxable,
-          vat_amount: vat,
-        };
-      });
-
-      const totals = rows.reduce((a, r) => ({
-        total_sales: a.total_sales + r.total_sales,
-        exempt_sales: a.exempt_sales + r.exempt_sales,
-        taxable_amount: a.taxable_amount + r.taxable_amount,
-        vat_amount: a.vat_amount + r.vat_amount,
-      }), { total_sales: 0, exempt_sales: 0, taxable_amount: 0, vat_amount: 0 });
-
-      return { rows, totals };
+      return buildVATBookRows((data || []) as any, business?.pan_number, annexType);
     },
   });
 }

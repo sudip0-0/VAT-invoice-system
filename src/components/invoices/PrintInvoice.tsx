@@ -25,6 +25,8 @@ const PrintInvoice = forwardRef<HTMLDivElement, PrintInvoiceProps>(
     const lineItems = (invoice.invoice_items || []).sort((a, b) => a.sort_order - b.sort_order);
     const isCancelled = invoice.status === "cancelled";
     const isSale = invoice.type === "sale";
+    const isCreditNote = invoice.type === "sale_return";
+    const isDebitNote = invoice.type === "purchase_return";
 
     const adIssueDate = new Date(invoice.issued_date_ad);
     const adIssueDateDisplay = adIssueDate.toLocaleDateString("en-GB");
@@ -41,7 +43,16 @@ const PrintInvoice = forwardRef<HTMLDivElement, PrintInvoiceProps>(
     const partyName = invoice.buyer_name || party?.name || "-";
     const partyAddress = invoice.buyer_address || `${party?.address || "-"}${party?.city ? `, ${party.city}` : ""}`;
     const partyPan = invoice.buyer_pan || party?.pan_number || "-";
-    const remarkText = invoice.notes || (isSale ? "SALES" : "PURCHASE");
+    const remarkText = invoice.correction_reason || invoice.notes || (isSale ? "SALES" : "PURCHASE");
+    const documentTitle = isCreditNote
+      ? "Credit Note"
+      : isDebitNote
+        ? "Debit Note"
+        : invoice.is_vat_invoice
+          ? "Tax Invoice"
+          : isSale
+            ? "Invoice"
+            : "Purchase Bill";
     const taxableAmount = invoice.is_vat_invoice ? invoice.taxable_amount : invoice.sub_total;
     const vatAmount = invoice.is_vat_invoice ? invoice.vat_amount : 0;
     const taxExempted = invoice.is_vat_invoice
@@ -77,7 +88,7 @@ const PrintInvoice = forwardRef<HTMLDivElement, PrintInvoiceProps>(
           {/* Title */}
           <div className="invoice-title border-b border-black py-2 text-center">
             <h2 className="font-semibold uppercase">
-              {invoice.is_vat_invoice ? "Tax Invoice" : isSale ? "Invoice" : "Purchase Bill"}
+              {documentTitle}
             </h2>
           </div>
 
@@ -96,6 +107,14 @@ const PrintInvoice = forwardRef<HTMLDivElement, PrintInvoiceProps>(
                 <span>Bill No</span>
                 <span>:</span>
                 <span className="font-semibold">{invoice.invoice_number}</span>
+
+                {invoice.original_invoice_number && (
+                  <>
+                    <span>Original Bill</span>
+                    <span>:</span>
+                    <span className="font-semibold">{invoice.original_invoice_number}</span>
+                  </>
+                )}
 
                 <span>Bill Miti</span>
                 <span>:</span>

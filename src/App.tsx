@@ -21,6 +21,7 @@ import QuotationsPage from "./pages/QuotationsPage";
 import QuotationCreatePage from "./pages/QuotationCreatePage";
 import PurchasesPage from "./pages/PurchasesPage";
 import PurchaseCreatePage from "./pages/PurchaseCreatePage";
+import CorrectionNotesPage from "./pages/CorrectionNotesPage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
 import PaymentsPage from "./pages/PaymentsPage";
@@ -68,6 +69,9 @@ function AppRoutes() {
       } />
       <Route path="/purchases/new" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><PurchaseCreatePage /></DashboardLayout></RequireBusiness></ProtectedRoute>
+      } />
+      <Route path="/correction-notes" element={
+        <ProtectedRoute><RequireBusiness><DashboardLayout><CorrectionNotesPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/quotations" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><QuotationsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>

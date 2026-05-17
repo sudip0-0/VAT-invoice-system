@@ -13,6 +13,8 @@ interface Business {
   phone: string;
   invoice_prefix: string;
   next_invoice_num: number;
+  next_credit_note_num: number;
+  next_debit_note_num: number;
   next_sales_invoice_num: number;
   next_purchase_bill_num: number;
   next_quotation_num: number;
@@ -136,7 +138,11 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         ? 'next_purchase_bill_num'
         : type === 'quotation'
           ? 'next_quotation_num'
-          : 'next_sales_invoice_num';
+          : type === 'sale_return'
+            ? 'next_credit_note_num'
+            : type === 'purchase_return'
+              ? 'next_debit_note_num'
+              : 'next_sales_invoice_num';
 
     setBusiness((prev) => (prev ? { ...prev, [counterKey]: nextDocumentNum } : prev));
     setBusinesses((prev) =>

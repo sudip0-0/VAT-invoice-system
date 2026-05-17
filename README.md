@@ -7,13 +7,14 @@ Nepal-focused billing, VAT invoicing, inventory, and reporting app for small bus
 - Offline email/password authentication in the desktop app
 - Multi-business support with role-based access
 - Business onboarding with default tax-rate setup
-- Sales invoices, purchase bills, and quotations from a shared invoice engine
+- Sales invoices, purchase bills, quotations, and issued-invoice credit/debit correction notes
 - VAT-aware line items, BS/AD dates, Nepal timezone handling, and NPR formatting
 - Inventory, manual stock adjustments, and automatic stock movement on invoice issue/cancel
 - Party balances and ledger views
 - Payment in/out flows for both invoice-linked and standalone payments
 - Dashboard and CSV-exportable reports
 - Print/PDF invoice output and WhatsApp sharing
+- Tamper-evident invoice audit events for issue, print/PDF, cancel, payment, correction note, and share/export actions
 
 ## Tech Stack
 
@@ -56,8 +57,9 @@ npm run preview
 2. Create a business from `/setup-business`.
 3. Add parties and inventory items.
 4. Create sales invoices, purchase bills, or quotations.
-5. Record payments and monitor balances.
-6. Use the dashboard and reports for VAT, stock, cash flow, and party analysis.
+5. For issued invoice corrections, open the original invoice and create a credit/debit note instead of editing the issued invoice.
+6. Record payments and monitor balances.
+7. Use the dashboard and reports for VAT, stock, cash flow, party analysis, and Schedule 8/9/10 review aids.
 
 ## Project Structure
 
@@ -78,11 +80,12 @@ npm run preview
 - Each user can belong to one or more businesses through `business_users`.
 - The active business is stored on `profiles.active_business_id`.
 
-### Sales, purchases, and quotations
+### Sales, purchases, quotations, and correction notes
 
-- Sales invoices, purchase bills, and quotations are all stored in `invoices`.
+- Sales invoices, purchase bills, quotations, credit notes, and debit notes are all stored in `invoices`.
 - The create, edit, and detail screens share the same data model and hook layer.
 - Quotations can be converted into invoices from the detail view.
+- Credit/debit notes are created from issued invoice detail screens, store the original invoice reference and reason, use separate fiscal-year sequences, and do not rewrite the original invoice.
 
 ### Inventory and stock
 
@@ -109,6 +112,8 @@ Reports are grouped into:
 
 Most reports can be filtered by date and exported as CSV.
 
+Compliance-oriented reports include VAT Return (Schedule 10 review aid), Purchase/Sales Books (Schedule 8/9 review aid), CN/DN register, and fiscal sequence review helpers. Fields that the app cannot derive reliably are marked for accountant review.
+
 ## Database Overview
 
 Main tables:
@@ -123,6 +128,8 @@ Main tables:
 - `invoices`
 - `invoice_items`
 - `payments`
+- `invoice_events`
+- `document_sequences`
 - `stock_movements`
 
 Important behavior:
@@ -131,6 +138,7 @@ Important behavior:
 - Profiles are auto-created on signup.
 - Invoice issue/cancel transitions change stock in the database.
 - The frontend inserts invoices as `draft` first, then updates status after line items are saved so stock triggers run with complete data.
+- Invoice/document events carry a SHA-256 hash chain for tamper-evidence. Legacy imported/restored rows without hashes should be reviewed before audit reliance.
 
 ## Nepal-Specific Behavior
 
@@ -139,14 +147,25 @@ Important behavior:
 - South Asian number formatting for NPR
 - Fiscal-year and VAT-period helpers
 - Amount-in-words for printable invoices
+- NPR rounding policy: compliance calculations round to nearest paisa (2 decimal places); helper tests reconcile totals using integer paisa.
 
 ## Known Gaps
 
-- The automated test suite is still limited, but now includes focused coverage for shortcuts, VAT compliance helpers, BS calendar deadlines, VAT return aggregation, and report calculations.
+- The automated test suite is still limited, but now includes focused coverage for shortcuts, VAT compliance helpers, BS calendar deadlines, VAT return aggregation, audit hash chains, fiscal sequence review, monetary reconciliation, and report calculations.
 - The repo has no full local seed/demo-data workflow yet.
 - Many reports are computed in the frontend from operational data instead of a dedicated reporting backend.
+- Correction notes currently clone the original invoice totals/items as a separate note; partial-line or partial-amount correction entry should be accountant-reviewed before statutory use.
 - CBMS/e-billing integration is not implemented. Businesses that are required to use IRD-approved electronic billing or CBMS must obtain accountant/IRD confirmation before using this app as their statutory billing system.
 - VAT return, purchase book, and sales book reports are compliance aids, not a substitute for review against the official IRD return and annex forms before filing.
+
+## Operator Checklist
+
+1. Confirm business PAN/VAT registration before issuing VAT invoices.
+2. Keep drafts editable, but do not directly edit issued VAT invoices.
+3. Create credit/debit notes from the original issued invoice for returns or corrections, with a clear reason.
+4. Review monthly VAT Return, Purchase/Sales Books, CN/DN register, and sequence review before filing.
+5. Verify invoice audit hash chains after backup restore/import before relying on records.
+6. Treat CBMS/e-billing as not configured and not implemented until IRD/accountant approval and real integration exist.
 
 ## Development Notes
 

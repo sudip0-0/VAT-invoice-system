@@ -121,13 +121,21 @@ function runSchemaMigrations() {
   addColumnIfMissing("businesses", "next_sales_invoice_num", "INTEGER NOT NULL DEFAULT 1");
   addColumnIfMissing("businesses", "next_purchase_bill_num", "INTEGER NOT NULL DEFAULT 1");
   addColumnIfMissing("businesses", "next_quotation_num", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing("businesses", "next_credit_note_num", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing("businesses", "next_debit_note_num", "INTEGER NOT NULL DEFAULT 1");
   addColumnIfMissing("invoices", "print_count", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing("invoices", "last_printed_at", "TEXT");
   addColumnIfMissing("invoices", "cancellation_reason", "TEXT");
   addColumnIfMissing("invoices", "cancelled_at", "TEXT");
   addColumnIfMissing("invoices", "fiscal_year", "TEXT");
   addColumnIfMissing("invoices", "document_serial", "INTEGER");
+  addColumnIfMissing("invoices", "original_invoice_id", "TEXT");
+  addColumnIfMissing("invoices", "original_invoice_number", "TEXT");
+  addColumnIfMissing("invoices", "correction_reason", "TEXT");
+  addColumnIfMissing("invoices", "correction_type", "TEXT");
   addColumnIfMissing("invoice_items", "tax_type", "TEXT NOT NULL DEFAULT 'vat_13'");
+  addColumnIfMissing("invoice_events", "previous_hash", "TEXT");
+  addColumnIfMissing("invoice_events", "event_hash", "TEXT");
 }
 
 function createResponse(data = null, error = null, count = null) {
@@ -353,6 +361,8 @@ function applyInsertDefaults(table, rawPayload) {
         next_sales_invoice_num: 1,
         next_purchase_bill_num: 1,
         next_quotation_num: 1,
+        next_credit_note_num: 1,
+        next_debit_note_num: 1,
         currency: "NPR",
         created_at: timestamp,
         updated_at: timestamp,
@@ -439,6 +449,10 @@ function applyInsertDefaults(table, rawPayload) {
         due_date_bs: null,
         fiscal_year: null,
         document_serial: null,
+        original_invoice_id: null,
+        original_invoice_number: null,
+        correction_reason: null,
+        correction_type: null,
         buyer_name: null,
         buyer_pan: null,
         buyer_phone: null,
@@ -488,6 +502,8 @@ function applyInsertDefaults(table, rawPayload) {
         ...base,
         user_id: null,
         details: null,
+        previous_hash: null,
+        event_hash: null,
         created_at: timestamp,
         ...payload,
       };
@@ -761,20 +777,32 @@ function withTransaction(work) {
 
 function getInvoiceStockPlan(invoiceType, statusMode) {
   if (statusMode === "issue") {
-    if (invoiceType === "sale" || invoiceType === "sale_return") {
+    if (invoiceType === "sale") {
       return { multiplier: -1, direction: "out", reason: invoiceType };
     }
-    if (invoiceType === "purchase" || invoiceType === "purchase_return") {
+    if (invoiceType === "purchase") {
       return { multiplier: 1, direction: "in", reason: invoiceType };
+    }
+    if (invoiceType === "sale_return") {
+      return { multiplier: 1, direction: "in", reason: invoiceType };
+    }
+    if (invoiceType === "purchase_return") {
+      return { multiplier: -1, direction: "out", reason: invoiceType };
     }
   }
 
   if (statusMode === "cancel") {
-    if (invoiceType === "sale" || invoiceType === "sale_return") {
+    if (invoiceType === "sale") {
       return { multiplier: 1, direction: "in", reason: "cancellation" };
     }
-    if (invoiceType === "purchase" || invoiceType === "purchase_return") {
+    if (invoiceType === "purchase") {
       return { multiplier: -1, direction: "out", reason: "cancellation" };
+    }
+    if (invoiceType === "sale_return") {
+      return { multiplier: -1, direction: "out", reason: "cancellation" };
+    }
+    if (invoiceType === "purchase_return") {
+      return { multiplier: 1, direction: "in", reason: "cancellation" };
     }
   }
 

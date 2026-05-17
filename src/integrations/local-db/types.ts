@@ -31,6 +31,8 @@ export interface BusinessRow {
   logo_url: string | null;
   name: string;
   next_invoice_num: number;
+  next_credit_note_num: number;
+  next_debit_note_num: number;
   next_purchase_bill_num: number;
   next_quotation_num: number;
   next_sales_invoice_num: number;
@@ -67,8 +69,10 @@ export interface InvoiceEventRow {
   business_id: string;
   created_at: string;
   details: string | null;
+  event_hash: string | null;
   id: string;
   invoice_id: string;
+  previous_hash: string | null;
   user_id: string | null;
 }
 
@@ -102,12 +106,16 @@ export interface InvoiceRow {
   id: string;
   invoice_number: string;
   is_vat_invoice: boolean;
+  correction_reason: string | null;
+  correction_type: string | null;
   issued_date_ad: string;
   issued_date_bs: string;
   notes: string | null;
   paid_amount: number;
   print_count: number;
   reference_number: string | null;
+  original_invoice_id: string | null;
+  original_invoice_number: string | null;
   status: InvoiceStatus;
   sub_total: number;
   taxable_amount: number;

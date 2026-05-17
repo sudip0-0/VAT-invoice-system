@@ -24,7 +24,7 @@ import {
   type CashCustomerDetails,
   emptyCashCustomerDetails,
 } from '@/lib/cash-customer';
-import { STATUTORY_VAT_RATE, calculateVATLine, canIssueVATInvoice, getVATRateForTaxType, hasRequiredBuyerPan, type LineTaxType } from '@/lib/vat-compliance';
+import { STATUTORY_VAT_RATE, calculateVATLine, canIssueVATInvoice, getVATRateForTaxType, hasRequiredBuyerPan, reconcileLineTotals, roundMoney, type LineTaxType } from '@/lib/vat-compliance';
 
 const LINE_TAX_TYPES: Array<{ value: LineTaxType; label: string }> = [
   { value: 'vat_13', label: 'VAT 13%' },
@@ -131,12 +131,15 @@ export default function InvoiceCreatePage() {
   const removeLine = (key: string) => setLines((prev) => prev.length > 1 ? prev.filter((l) => l.key !== key) : prev);
 
   const totals = useMemo(() => {
-    const subTotal = lines.reduce((s, l) => s + l.quantity * l.rate, 0);
-    const discountAmount = lines.reduce((s, l) => s + l.discount_amt, 0);
-    const taxableAmount = lines.reduce((s, l) => s + l.taxable_amount, 0);
-    const vatAmount = lines.reduce((s, l) => s + l.vat_amount, 0);
-    const totalAmount = lines.reduce((s, l) => s + l.total_amount, 0);
-    return { subTotal, discountAmount, taxableAmount, vatAmount, totalAmount };
+    const subTotal = roundMoney(lines.reduce((s, l) => s + l.quantity * l.rate, 0));
+    const reconciled = reconcileLineTotals(lines);
+    return {
+      subTotal,
+      discountAmount: reconciled.discount_amount,
+      taxableAmount: reconciled.taxable_amount,
+      vatAmount: reconciled.vat_amount,
+      totalAmount: reconciled.total_amount,
+    };
   }, [lines]);
 
   const invoiceNumber = `${business?.invoice_prefix || 'INV'}-${String(business?.next_sales_invoice_num || business?.next_invoice_num || 1).padStart(4, '0')}`;

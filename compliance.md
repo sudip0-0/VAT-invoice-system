@@ -25,10 +25,14 @@ Primary source:
 | Inspect printable invoice | `src/components/invoices/PrintInvoice.tsx` updated for buyer PAN snapshot, HSN snapshot, statutory VAT label, print-count flow, and exempt line summary | Done |
 | Inspect Nepal date/report utilities | `src/lib/bs-calendar.ts`, VAT return/report helpers updated and tested | Done |
 | Add/update tests where feasible | `src/test/vat-compliance.test.ts`, `src/test/bs-calendar.test.ts`, `src/test/vat-return.test.ts` | Done |
-| Run `npm test` | Passed: 6 test files, 20 tests | Done |
+| Run `npm test` | Passed: 7 test files, 26 tests | Done |
 | Run `npm run lint` | Passed with 12 pre-existing warnings | Done |
 | Run `npx tsc --noEmit` | Passed | Done |
 | Run `npm run build` | Passed with existing Vite/bundle warnings | Done |
+| Credit/debit note workflows | `CorrectionNotesPage.tsx`, `InvoiceDetailPage.tsx`, `PrintInvoice.tsx`, schema fields, separate CN/DN sequences, VAT return tests | Done with partial-correction UX limitation |
+| Tamper-evident audit trail | `invoice_events.previous_hash/event_hash`, `audit-chain.ts`, invoice hash-chain verification UI, restore warning | Done for local tamper-evidence; not legal signing |
+| Monetary precision | NPR paisa policy/helpers in `vat-compliance.ts`; create/edit/quotation/purchase totals reconcile via helper | Done; persisted storage migration remains future work |
+| CBMS/e-billing boundary | Settings CBMS tab, README/compliance warnings | Done; integration not implemented |
 | Mark uncertain rules for accountant/IRD confirmation | See compliance gap table and "Still partial or not implemented" sections | Done |
 
 ## Compliance Gap Audit Table
@@ -37,25 +41,25 @@ Primary source:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | VAT invoices only by VAT-registered businesses | VAT Act/Rules registration and tax-invoice requirements | VAT invoice issue/create/update blocked unless active business is VAT registered; setup/settings require PAN when VAT registered | Historical records may predate validation | Enforced validation and docs | `src/lib/vat-compliance.ts`, invoice pages, business setup/settings | `vat-compliance.test.ts`; app validation gates | Confirm edge cases for deregistration/history |
 | 13% VAT unless explicitly zero-rated/exempt/non-taxable | VAT Act/Rules standard VAT treatment and schedules | Line-level `tax_type` drives statutory 13% VAT or zero VAT classification | Correct classification is an accounting/legal decision | Added `invoice_items.tax_type`, UI selectors, statutory helper | schema, DB adapter, types, invoice/purchase/quotation/edit pages | `vat-compliance.test.ts`, typecheck/build | Confirm supply classifications and any zero-rated evidence requirements |
-| Discounts reduce taxable value | VAT Rules tax invoice values and VAT calculation practice | Line helper calculates discount before taxable/VAT amount | Money still stored as `REAL` | Centralized helper with rounding to 2 decimals | `src/lib/vat-compliance.ts`, invoice flows | `vat-compliance.test.ts` | Confirm rounding policy for paisa/rupee presentation |
+| Discounts reduce taxable value | VAT Rules tax invoice values and VAT calculation practice | Line helper calculates discount before taxable/VAT amount; document totals reconcile through integer-paisa helpers | Money still persisted as `REAL` until reviewed migration | Centralized NPR paisa rounding/reconciliation helpers | `src/lib/vat-compliance.ts`, invoice flows | `vat-compliance.test.ts`, `compliance-hardening.test.ts` | Confirm rounding policy for paisa/rupee presentation |
 | Printed invoice includes Schedule 5 style fields | VAT Rules Rule 17 and Schedule 5B | Seller/buyer details, PAN, date, invoice no, line details, HSN, quantity, unit, rate, discount, taxable, VAT, total, words, signature area | Payment mode is derived, not explicitly stored; electronic signature/hash absent | Improved stored buyer PAN and HSN snapshots; print count recorded | `PrintInvoice.tsx`, invoice schema/hook | Build/typecheck; manual print review still required | Confirm exact print format and any business-specific fields |
-| Unique/sequential invoice numbers | VAT Rules invoice/book record expectations | New documents use fiscal-year `document_sequences`; invoice-number unique index added | Historical backfill and concurrency stress testing remain | Added sequence table, document serial, fiscal year | schema, DB adapter, `useInvoices.ts` | tests/build; DB unique index | Confirm fiscal-year reset policy and legacy backfill |
-| Issued VAT invoices not silently edited | Record preservation/correction expectations | Issued/partially-paid/paid VAT invoices blocked from direct edit; events logged | No formal correction-note workflow yet | Added direct-edit guard and audit event logging | `useInvoices.ts`, invoice detail/edit pages | `vat-compliance.test.ts`; typecheck/build | Confirm correction workflow design with accountant/IRD |
+| Unique/sequential invoice numbers | VAT Rules invoice/book record expectations | New documents use fiscal-year `document_sequences`; invoice-number and fiscal serial unique indexes added for sales, purchases, quotations, credit notes, and debit notes | Historical backfill and concurrency stress testing remain | Added sequence table, document serial, fiscal year, sequence review helper | schema, DB adapter, `useInvoices.ts`, `fiscal-sequence-review.ts` | tests/build; DB unique indexes | Confirm fiscal-year reset policy and legacy backfill |
+| Issued VAT invoices not silently edited | Record preservation/correction expectations | Issued/partially-paid/paid VAT invoices blocked from direct edit; credit/debit notes are separate documents referencing original invoice | Partial amount/line correction entry remains basic and requires review | Added direct-edit guard, correction-note workflow, and audit event logging | `useInvoices.ts`, invoice detail/list/print pages | `vat-compliance.test.ts`, `compliance-hardening.test.ts`; typecheck/build | Confirm correction workflow design with accountant/IRD |
 | Buyer PAN on VAT sales invoice | IRD PAN guidance and tax invoice buyer details | Buyer PAN required to issue VAT sales invoices; drafts can remain incomplete | Abbreviated/cash-sale exceptions not implemented | Added issue guard | invoice create/edit pages, `vat-compliance.ts` | `vat-compliance.test.ts` | Confirm exceptions and threshold behavior |
-| Print/export records | Auditability expectations and electronic billing risk controls | Print count, last printed timestamp, cancellation reason, cancellation timestamp, invoice events added | No tamper-evident hash/signature | Added fields, event log, UI display | schema, DB adapter, `useInvoices.ts`, invoice detail | build/typecheck | Confirm if IRD-approved billing requires more controls |
+| Print/export records | Auditability expectations and electronic billing risk controls | Print count, last printed timestamp, cancellation reason, cancellation timestamp, invoice events, and per-invoice SHA-256 hash chain added | Not an IRD-approved digital signature or e-billing control | Added fields, event log, hash verification UI | schema, DB adapter, `useInvoices.ts`, `audit-chain.ts`, invoice detail | `compliance-hardening.test.ts`; build/typecheck | Confirm if IRD-approved billing requires more controls |
 | VAT periods and 25-day deadline | VAT Rules return timing and BS monthly periods | VAT period stored and VAT summary shows/export due date as next BS month 25th | Full Schedule 10 filing workflow incomplete | Added deadline helper and report display/export | `bs-calendar.ts`, `ReportsPage.tsx` | `bs-calendar.test.ts` | Confirm filing calendar for special periods/holidays |
-| VAT reports/books | VAT Rules Schedule 8/9/10 | VAT annex exports include fiscal year, period, taxpayer PAN, document serial; VAT return includes document counts | Still not an official filing substitute; imports/capital purchases/refund/voucher fields missing | Added annex metadata and tested VAT return aggregation | report hooks/pages, `vat-return.ts` | `vat-return.test.ts`, build/typecheck | Accountant review required before filing |
-| Cancellations/returns/corrections | VAT correction expectations | Cancellation reason/timestamp and audit log present; return report exists for schema types | Credit/debit note UI/model is incomplete | Documented as remaining high-priority gap | compliance doc, existing CNDN report | Not fully verified | Required before using corrections statutorily |
-| CBMS/electronic billing | IRD electronic invoice/CBMS pages | README and compliance docs clearly state CBMS/e-billing not implemented | No approval/submission metadata or API | Documentation only | `README.md`, `compliance.md` | Doc review | Must obtain IRD/accountant confirmation before statutory use where required |
+| VAT reports/books | VAT Rules Schedule 8/9/10 | VAT annex exports include fiscal year, period, taxpayer PAN, document serial; VAT return includes document counts and CN/DN impact | Still not an official filing substitute; imports/capital purchases/refund/voucher fields missing | Added annex metadata and tested VAT return/CN/DN aggregation | report hooks/pages, `vat-return.ts` | `vat-return.test.ts`, `compliance-hardening.test.ts`, build/typecheck | Accountant review required before filing |
+| Cancellations/returns/corrections | VAT correction expectations | Cancellation reason/timestamp and audit log present; CN/DN route, detail action, print title/reference, original invoice ID/number, reason, and separate sequences added | Partial-line correction UX remains basic | Implemented first-class correction note list/detail/create-from-original workflow | schema, `useInvoices.ts`, `CorrectionNotesPage.tsx`, `PrintInvoice.tsx` | `compliance-hardening.test.ts`; build/typecheck | Required before using corrections statutorily |
+| CBMS/electronic billing | IRD electronic invoice/CBMS pages | README, compliance docs, and Settings CBMS tab clearly state CBMS/e-billing not configured or implemented | No approval/submission metadata or API | Boundary/status UI and documentation only | `SettingsPage.tsx`, `README.md`, `compliance.md` | Doc/UI review; build/typecheck | Must obtain IRD/accountant confirmation before statutory use where required |
 
 ## Prioritized Implementation Plan
 
-1. Finish correction documents: explicit credit note/debit note create/detail/print flows with original invoice reference, reason, fiscal-year sequence, and VAT adjustment totals.
+1. Accountant-review correction note UX: allow partial-line/partial-amount CN/DN entry and explicit adjustment categories after confirming expected office workflow.
 2. Complete Schedule 10: payment voucher fields, refund reason, import/capitalized purchase buckets, document counts by category, and accountant-reviewed export layout.
-3. Add tamper-evident audit controls: per-document hash chain, immutable event details, export history, and restore/import warnings.
-4. Harden monetary storage: integer paisa or decimal-safe persistence with migration and reconciliation checks.
+3. Strengthen audit controls further: device/user attribution, signed exports, import event logging, and independent backup verification.
+4. Migrate persisted monetary columns from `REAL` to integer paisa only after a reviewed data migration plan.
 5. Backfill existing invoices: accountant-reviewed fiscal year, document serial, HSN/tax classification, and cancellation/print metadata where possible.
-6. Expand tests: issue/cancel stock movements, invoice lifecycle, payment balance updates, VAT reports, and print data snapshots.
+6. Expand tests: issue/cancel stock movements for paid/partial states, invoice lifecycle, payment balance updates, VAT reports, and print data snapshots.
 7. CBMS/e-billing only after confirmation: add IRD-approved billing metadata/integration if the business falls under mandatory electronic billing.
 
 ## Operator Checklist for Nepali VAT Businesses
@@ -63,8 +67,9 @@ Primary source:
 - Confirm the business PAN/VAT number and VAT registration status before issuing VAT invoices.
 - Use VAT 13% for ordinary taxable supplies; choose zero-rated/exempt/non-taxable only with accountant-supported evidence.
 - Enter buyer PAN/VAT number before issuing VAT sales invoices unless an accountant confirms a valid exception.
-- Do not directly edit issued VAT invoices; cancel with a reason or use a credit/debit note workflow once implemented.
-- Review invoice sequence continuity by fiscal year before filing or audit.
+- Do not directly edit issued VAT invoices; cancel with a reason or create a credit/debit note from the original invoice detail page.
+- Review invoice sequence continuity by fiscal year before filing or audit; legacy documents should not be renumbered automatically.
+- Verify invoice audit hash chains after backup restore/import before relying on records.
 - Export VAT summaries/annexes monthly and file by the 25th day of the following BS month after accountant review.
 - Do not treat this app as CBMS/e-billing compliant until IRD approval/integration is explicitly implemented.
 
@@ -126,7 +131,7 @@ Recommended remediation:
 
 Phase 2 status:
 - Direct edits are now blocked for issued/partially-paid/paid VAT invoices in the UI and mutation hook.
-- Correction workflow remains incomplete and should be implemented through credit/debit notes.
+- Correction workflow now creates separate credit/debit notes from the issued invoice detail screen, stores original invoice ID/number and reason, uses separate fiscal-year sequences, and prints the note as a note rather than rewriting the issued invoice.
 
 ### 2. Invoice numbering sequence is shared across sales, purchases, and quotations
 
@@ -145,9 +150,10 @@ Recommended remediation:
 - Consider storing immutable sequence metadata such as fiscal year, document type, and numeric serial.
 
 Phase 2 Batch 2 status:
-- Partially implemented document-type counters for sales invoices, purchase bills, and quotations.
+- Implemented document-type counters for sales invoices, purchase bills, quotations, credit notes, and debit notes.
 - Existing `next_invoice_num` remains for backward compatibility and mirrors the sales counter.
 - Fiscal-year-specific `document_sequences` and invoice `fiscal_year` / `document_serial` metadata are now implemented for newly created documents.
+- Added fiscal sequence review helper to flag gaps, duplicates, missing fiscal year/serial, and legacy review records without renumbering historical records automatically.
 
 ### 3. Printed invoice does not use stored HSN/HSCode
 
@@ -168,9 +174,9 @@ Recommended remediation:
 Phase 2 Batch 1 status:
 - Implemented for `hsn_code`; item code remains a future enhancement if it is required on the operator's invoice format.
 
-### 4. Credit/debit note support is incomplete
+### 4. Credit/debit note support is basic but now first-class
 
-Reports expect `sale_return` and `purchase_return`, but the normal creation and edit flows only create sale and purchase invoices. The schema does not include formal credit/debit note fields such as original invoice reference, reason, adjustment type, or separate note sequence.
+Reports use `sale_return` and `purchase_return`, and the app now exposes credit/debit notes from issued invoice detail pages. The schema stores original invoice reference, reason, adjustment type, and separate note sequence metadata.
 
 Evidence:
 - `src/hooks/useReportsExtra.ts`
@@ -178,15 +184,15 @@ Evidence:
 - `electron/db/schema.sql`
 
 Risk:
-- Corrections, returns, and value changes cannot be handled in the prescribed credit/debit note form.
+- The workflow clones the original invoice lines/totals into a separate correction note. Partial returns, partial value corrections, and accountant-specific adjustment categories still need review before statutory reliance.
 
 Recommended remediation:
-- Add explicit credit note and debit note workflows.
-- Store original invoice ID/number, reason, note date, note serial, tax adjustment amounts, and status.
+- Add partial-line/partial-amount correction editing after accountant review.
+- Confirm printed note wording and field requirements with the taxpayer's accountant.
 
-### 5. Electronic billing and audit controls are absent
+### 5. Electronic billing is absent; audit controls are tamper-evident but not IRD e-billing
 
-The app stores data locally in SQLite and supports backup/restore. There is no immutable audit log, user attribution per invoice action, hash/signature, or e-billing/CBMS submission metadata. Print count and cancellation reason are now stored, but they are not a full audit trail.
+The app stores data locally in SQLite and supports backup/restore. Invoice events now include a per-document SHA-256 hash chain for draft/create, issue, print/PDF, cancel, payment, correction-note, and share/export events. There is still no IRD-approved electronic billing integration, digital signature certificate, or CBMS submission metadata.
 
 Evidence:
 - `electron/db/schema.sql`
@@ -194,12 +200,12 @@ Evidence:
 - `src/pages/SettingsPage.tsx`
 
 Risk:
-- Weak auditability for issued/cancelled/printed invoices.
+- Auditability is improved but remains local tamper-evidence, not legal certification.
 - May not satisfy stricter e-billing requirements for taxpayers required to use approved electronic billing.
 
 Recommended remediation:
-- Add invoice event log for issue, print, cancel, payment, correction, and export actions.
-- Store user ID, timestamp, action, previous values where relevant, reason, and document hash.
+- Add signed export/backup verification and restore/import event logging beyond the current restore warning.
+- Store richer previous/next value snapshots where needed.
 - If targeting IRD e-billing, add approval/configuration and submission metadata only after confirming exact integration obligations.
 
 ## Medium-Priority Gaps
@@ -328,9 +334,27 @@ Implemented:
 
 Still partial or not implemented:
 
-- No credit/debit note correction workflow yet; issued VAT invoice corrections still need a compliant replacement workflow.
-- Invoice numbering is split by document type and fiscal year for new documents. Existing historical invoices may need accountant-reviewed migration/backfill before statutory reliance.
+- Credit/debit note correction workflow exists, but partial-line/partial-amount correction entry and accountant-specific categories still need confirmation.
+- Invoice numbering is split by document type and fiscal year for new documents, including CN/DN. Existing historical invoices may need accountant-reviewed migration/backfill before statutory reliance.
 - Buyer PAN validation is enforced for issued VAT sales invoices. Abbreviated invoice and cash-sale exceptions still need accountant/IRD confirmation before adding separate behavior.
 - Line-level tax classification is stored and reported, but correct classification of exempt, zero-rated, and non-taxable supplies remains an accounting/legal decision.
 - VAT returns/books now include more Schedule 8/9 and Schedule 10 review metadata, but still require accountant review and are not a full statutory filing substitute.
-- CBMS/e-billing approval, submission, export count, correction-note workflow, and tamper-evident hashing/signing remain not implemented.
+- CBMS/e-billing approval and submission remain not implemented. Tamper-evident local hashing exists, but IRD-approved signing/e-billing does not.
+
+## Phase 3 Hardening Changes
+
+- Added explicit credit/debit note creation from issued invoice detail pages with original invoice ID/number, correction reason/type, separate `CN-` / `DN-` fiscal-year sequences, print labels, and a dedicated CN/DN list page.
+- Added sequence counters for credit notes and debit notes plus a fiscal sequence review helper that flags gaps, duplicates, missing fiscal-year/serial metadata, and legacy review records without rewriting historical numbers.
+- Added SHA-256 invoice event hash chaining for issue, print/PDF, cancel, payment, correction note, and share/export events; invoice detail now shows hash-chain verification.
+- Added restore warning copy telling operators to verify invoice audit hash chains before relying on restored records.
+- Added explicit NPR rounding policy and integer-paisa reconciliation helpers for compliance-critical calculations.
+- VAT summary/return helpers now account for credit notes reducing sales VAT and debit notes reducing purchase VAT.
+- Added Settings CBMS status tab stating that IRD CBMS/e-billing is not configured, not implemented, and requires accountant/IRD confirmation.
+- Added focused tests in `src/test/compliance-hardening.test.ts`.
+
+Phase 3 remaining limitations:
+
+- Monetary columns still persist as SQLite `REAL`; integer-paisa helpers are used for tested calculations, but a storage migration needs accountant-reviewed reconciliation.
+- Credit/debit note entry currently clones the original invoice into a separate correction note; partial correction UX is not complete.
+- VAT Return and Purchase/Sales Books remain review aids and are not official filing/certification outputs.
+- CBMS/e-billing remains a boundary only; there is no real IRD submission integration.

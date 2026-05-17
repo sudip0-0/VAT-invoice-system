@@ -16,7 +16,7 @@ import { type BSDate, todayBS, formatBSShort, getVATPeriod, adToBS } from '@/lib
 import { nepalTodayISO } from '@/lib/nepal-date';
 import BSDatePicker from '@/components/shared/BSDatePicker';
 import ItemCombobox from '@/components/invoices/ItemCombobox';
-import { STATUTORY_VAT_RATE, calculateVATLine, canIssueVATInvoice, getVATRateForTaxType, type LineTaxType } from '@/lib/vat-compliance';
+import { STATUTORY_VAT_RATE, calculateVATLine, canIssueVATInvoice, getVATRateForTaxType, reconcileLineTotals, roundMoney, type LineTaxType } from '@/lib/vat-compliance';
 
 const LINE_TAX_TYPES: Array<{ value: LineTaxType; label: string }> = [
   { value: 'vat_13', label: 'VAT 13%' },
@@ -94,12 +94,15 @@ export default function QuotationCreatePage() {
   const removeLine = (key: string) => setLines((prev) => prev.length > 1 ? prev.filter((l) => l.key !== key) : prev);
 
   const totals = useMemo(() => {
-    const subTotal = lines.reduce((s, l) => s + l.quantity * l.rate, 0);
-    const discountAmount = lines.reduce((s, l) => s + l.discount_amt, 0);
-    const taxableAmount = lines.reduce((s, l) => s + l.taxable_amount, 0);
-    const vatAmount = lines.reduce((s, l) => s + l.vat_amount, 0);
-    const totalAmount = lines.reduce((s, l) => s + l.total_amount, 0);
-    return { subTotal, discountAmount, taxableAmount, vatAmount, totalAmount };
+    const subTotal = roundMoney(lines.reduce((s, l) => s + l.quantity * l.rate, 0));
+    const reconciled = reconcileLineTotals(lines);
+    return {
+      subTotal,
+      discountAmount: reconciled.discount_amount,
+      taxableAmount: reconciled.taxable_amount,
+      vatAmount: reconciled.vat_amount,
+      totalAmount: reconciled.total_amount,
+    };
   }, [lines]);
 
   const quotationNumber = `QTN-${String(business?.next_quotation_num || 1).padStart(4, '0')}`;

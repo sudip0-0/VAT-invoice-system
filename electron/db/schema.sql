@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS businesses (
   next_sales_invoice_num INTEGER NOT NULL DEFAULT 1,
   next_purchase_bill_num INTEGER NOT NULL DEFAULT 1,
   next_quotation_num INTEGER NOT NULL DEFAULT 1,
+  next_credit_note_num INTEGER NOT NULL DEFAULT 1,
+  next_debit_note_num INTEGER NOT NULL DEFAULT 1,
   currency TEXT NOT NULL DEFAULT 'NPR',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -146,6 +148,10 @@ CREATE TABLE IF NOT EXISTS invoices (
   due_date_bs TEXT,
   fiscal_year TEXT,
   document_serial INTEGER,
+  original_invoice_id TEXT,
+  original_invoice_number TEXT,
+  correction_reason TEXT,
+  correction_type TEXT,
   buyer_name TEXT,
   buyer_pan TEXT,
   buyer_phone TEXT,
@@ -170,7 +176,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   deleted_at TEXT,
   FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
   FOREIGN KEY (customer_id) REFERENCES parties(id),
-  FOREIGN KEY (vendor_id) REFERENCES parties(id)
+  FOREIGN KEY (vendor_id) REFERENCES parties(id),
+  FOREIGN KEY (original_invoice_id) REFERENCES invoices(id)
 );
 
 CREATE TABLE IF NOT EXISTS invoice_items (
@@ -227,6 +234,8 @@ CREATE TABLE IF NOT EXISTS invoice_events (
   user_id TEXT,
   action TEXT NOT NULL,
   details TEXT,
+  previous_hash TEXT,
+  event_hash TEXT,
   created_at TEXT NOT NULL,
   FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
   FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
@@ -288,14 +297,17 @@ CREATE INDEX IF NOT EXISTS idx_invoices_business_id ON invoices(business_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_business_type_status_created ON invoices(business_id, type, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_invoices_business_type_issued_date ON invoices(business_id, type, issued_date_ad);
 CREATE INDEX IF NOT EXISTS idx_invoices_business_type_fiscal_serial ON invoices(business_id, type, fiscal_year, document_serial);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_business_type_fiscal_serial_unique ON invoices(business_id, type, fiscal_year, document_serial) WHERE fiscal_year IS NOT NULL AND document_serial IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_invoices_business_invoice_number ON invoices(business_id, invoice_number);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_business_invoice_number_unique ON invoices(business_id, invoice_number);
+CREATE INDEX IF NOT EXISTS idx_invoices_original_invoice_id ON invoices(original_invoice_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_id ON invoice_items(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_payments_business_id ON payments(business_id);
 CREATE INDEX IF NOT EXISTS idx_payments_business_party_status ON payments(business_id, party_id, status);
 CREATE INDEX IF NOT EXISTS idx_payments_business_payment_date ON payments(business_id, payment_date_ad);
 CREATE INDEX IF NOT EXISTS idx_invoice_events_invoice_created ON invoice_events(invoice_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_invoice_events_business_created ON invoice_events(business_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_invoice_events_invoice_hash ON invoice_events(invoice_id, event_hash);
 CREATE INDEX IF NOT EXISTS idx_document_sequences_business_type_year ON document_sequences(business_id, document_type, fiscal_year);
 CREATE INDEX IF NOT EXISTS idx_expenses_business_date ON expenses(business_id, expense_date_ad);
 CREATE INDEX IF NOT EXISTS idx_expenses_business_category ON expenses(business_id, category);

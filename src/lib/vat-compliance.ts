@@ -18,6 +18,9 @@ export interface VATLineTotals {
   total_amount: number;
 }
 
+export const NPR_ROUNDING_POLICY =
+  "Compliance calculations round each line and document total to the nearest paisa (2 decimal places); display keeps NPR with two decimals and no automatic rupee rounding.";
+
 export interface EditableInvoiceLike {
   type: InvoiceType | string;
   status: InvoiceStatus | string;
@@ -26,6 +29,39 @@ export interface EditableInvoiceLike {
 
 export function roundMoney(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+export function toPaisa(amount: number): number {
+  return Math.round((Number(amount) + Number.EPSILON) * 100);
+}
+
+export function fromPaisa(paisa: number): number {
+  return roundMoney(Number(paisa) / 100);
+}
+
+export function reconcileLineTotals(lines: VATLineTotals[]) {
+  const totals = lines.reduce(
+    (acc, line) => ({
+      discount_amount_paisa: acc.discount_amount_paisa + toPaisa(line.discount_amt),
+      taxable_amount_paisa: acc.taxable_amount_paisa + toPaisa(line.taxable_amount),
+      vat_amount_paisa: acc.vat_amount_paisa + toPaisa(line.vat_amount),
+      total_amount_paisa: acc.total_amount_paisa + toPaisa(line.total_amount),
+    }),
+    {
+      discount_amount_paisa: 0,
+      taxable_amount_paisa: 0,
+      vat_amount_paisa: 0,
+      total_amount_paisa: 0,
+    }
+  );
+
+  return {
+    discount_amount: fromPaisa(totals.discount_amount_paisa),
+    taxable_amount: fromPaisa(totals.taxable_amount_paisa),
+    vat_amount: fromPaisa(totals.vat_amount_paisa),
+    total_amount: fromPaisa(totals.total_amount_paisa),
+    ...totals,
+  };
 }
 
 export function calculateVATLine(input: VATLineInput): VATLineTotals {
@@ -74,6 +110,7 @@ export function hasRequiredBuyerPan(
 export function canDirectlyEditInvoice(invoice: EditableInvoiceLike): boolean {
   if (invoice.status === "cancelled" || invoice.status === "paid") return false;
   if (invoice.type === "quotation") return true;
+  if ((invoice.type === "sale_return" || invoice.type === "purchase_return") && invoice.status !== "draft") return false;
   if (invoice.is_vat_invoice && invoice.status !== "draft") return false;
   return true;
 }

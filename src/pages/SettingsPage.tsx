@@ -30,6 +30,7 @@ export default function SettingsPage() {
         <TabsList className="h-8">
           <TabsTrigger value="business" className="text-xs px-3">Business Profile</TabsTrigger>
           <TabsTrigger value="tax" className="text-xs px-3">Tax Rates</TabsTrigger>
+          <TabsTrigger value="cbms" className="text-xs px-3">CBMS</TabsTrigger>
           <TabsTrigger value="user" className="text-xs px-3">My Profile</TabsTrigger>
           <TabsTrigger value="data" className="text-xs px-3">Data</TabsTrigger>
         </TabsList>
@@ -40,6 +41,9 @@ export default function SettingsPage() {
         <TabsContent value="tax" className="mt-4">
           <TaxRatesTab />
         </TabsContent>
+        <TabsContent value="cbms" className="mt-4">
+          <CBMSStatusTab />
+        </TabsContent>
         <TabsContent value="user" className="mt-4">
           <UserProfileTab />
         </TabsContent>
@@ -47,6 +51,33 @@ export default function SettingsPage() {
           <DesktopDataTab />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function CBMSStatusTab() {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">IRD CBMS / E-billing Status</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Not configured. This desktop app does not submit invoices to IRD, does not have an IRD-approved CBMS integration, and does not claim e-billing certification.
+        </p>
+      </div>
+      <div className="grid gap-2 text-xs">
+        <div className="rounded-md border border-border p-3">
+          <p className="font-medium text-foreground">Configuration</p>
+          <p className="text-muted-foreground">Requires IRD/accountant confirmation before any statutory e-billing use.</p>
+        </div>
+        <div className="rounded-md border border-border p-3">
+          <p className="font-medium text-foreground">Integration</p>
+          <p className="text-muted-foreground">Not implemented. No API credentials, submission IDs, or IRD acknowledgements are stored.</p>
+        </div>
+        <div className="rounded-md border border-border p-3">
+          <p className="font-medium text-foreground">Operator action</p>
+          <p className="text-muted-foreground">Use local invoices and reports only after accountant review; do not present exports as IRD-submitted records.</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -479,7 +510,7 @@ function DesktopDataTab() {
     }
 
     if (!response.data?.canceled) {
-      toast({ title: 'Backup restored', description: 'Restart the app or refresh this window to reload restored data.' });
+      toast({ title: 'Backup restored', description: 'Restart the app and verify invoice audit hash chains before relying on restored records.' });
     }
   };
 
