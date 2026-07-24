@@ -186,7 +186,7 @@ export const localDb = {
       }
       return response;
     },
-    async updateUser(payload: { password?: string }) {
+    async updateUser(payload: { password?: string; currentPassword?: string }) {
       const response = await getDesktopApi().auth.updateUser(payload);
       if (!response.error) {
         emitAuthChange("USER_UPDATED", response.data?.session ?? null);
@@ -195,6 +195,26 @@ export const localDb = {
     },
     async resetPasswordForEmail(email: string, options?: { redirectTo?: string }) {
       return getDesktopApi().auth.resetPasswordForEmail({ email, redirectTo: options?.redirectTo });
+    },
+  },
+  documents: {
+    createAndIssue(payload: {
+      invoice: Record<string, unknown>;
+      items?: Array<Record<string, unknown>>;
+      paymentAmount?: number;
+    }) {
+      return getDesktopApi().documents.createAndIssue(payload);
+    },
+  },
+  stock: {
+    adjust(payload: {
+      business_id: string;
+      item_id: string;
+      quantity: number;
+      direction: "in" | "out";
+      reason?: string;
+    }) {
+      return getDesktopApi().stock.adjust(payload);
     },
   },
 };

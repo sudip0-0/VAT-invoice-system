@@ -3,7 +3,7 @@ import { localDb } from '@/integrations/local-db/client';
 import { useBusiness } from '@/contexts/BusinessContext';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Tables, TablesInsert } from '@/integrations/local-db/types';
-import { canDirectlyEditInvoice, canIssueVATInvoice, hasRequiredBuyerPan } from '@/lib/vat-compliance';
+import { canDirectlyEditInvoice, validateInvoiceIssuePreflight } from '@/lib/vat-compliance';
 import { calculateAuditEventHash, verifyAuditHashChain } from '@/lib/audit-chain';
 import { adToBS, formatBSShort, getFiscalYear, getVATPeriod, todayBS } from '@/lib/bs-calendar';
 import { parseLocalDate } from '@/lib/nepal-date';
@@ -225,6 +225,24 @@ async function logInvoiceEvent({
   if (error) throw error;
 }
 
+async function getStockByItemId(items: Array<{ item_id?: string | null }>) {
+  const itemIds = Array.from(new Set(items.map((item) => item.item_id).filter(Boolean))) as string[];
+  if (itemIds.length === 0) return {};
+
+  const { data, error } = await localDb
+    .from('items')
+    .select('id, name, type, current_stock')
+    .in('id', itemIds);
+  if (error) throw error;
+
+  return Object.fromEntries(
+    (data || []).map((item: any) => [
+      item.id,
+      { name: item.name, type: item.type, current_stock: Number(item.current_stock || 0) },
+    ])
+  );
+}
+
 export function useInvoices() {
   const { business, setNextDocumentNum } = useBusiness();
   const { user } = useAuth();
@@ -254,110 +272,53 @@ export function useInvoices() {
       invoice: Omit<TablesInsert<'invoices'>, 'business_id'>;
       items: Omit<TablesInsert<'invoice_items'>, 'invoice_id'>[];
     }) => {
-      const invoiceId = crypto.randomUUID();
       const desiredStatus = invoice.status || 'draft';
       const paidAmount = Number(invoice.paid_amount || 0);
-      if (!canIssueVATInvoice(Boolean(invoice.is_vat_invoice), Boolean(business?.is_vat_registered))) {
-        throw new Error('VAT invoices require a VAT-registered business');
+      const stockByItemId = await getStockByItemId(items);
+      const preflight = validateInvoiceIssuePreflight({
+        type: invoice.type,
+        status: desiredStatus,
+        isVatInvoice: Boolean(invoice.is_vat_invoice),
+        isBusinessVatRegistered: Boolean(business?.is_vat_registered),
+        businessPan: business?.pan_number,
+        buyerPan: invoice.buyer_pan,
+        totals: {
+          discountAmount: Number(invoice.discount_amount || 0),
+          taxableAmount: Number(invoice.taxable_amount || 0),
+          vatAmount: Number(invoice.vat_amount || 0),
+          totalAmount: Number(invoice.total_amount || 0),
+        },
+        lines: items,
+        stockByItemId,
+      });
+      if (!preflight.ok) {
+        throw new Error(preflight.errors[0]);
       }
-      if (!hasRequiredBuyerPan(invoice.type, desiredStatus, Boolean(invoice.is_vat_invoice), invoice.buyer_pan)) {
-        throw new Error('Buyer PAN/VAT number is required to issue VAT sales invoices');
-      }
-      const {
-        invoicePrefix,
-        reservedInvoiceNum,
-        updatedNextInvoiceNum,
-        fiscalYear,
-      } = await reserveNextInvoiceNumber(business!.id, invoice.type, invoice.issued_date_ad);
-      setNextDocumentNum(invoice.type, updatedNextInvoiceNum);
 
-      const invoiceNumber = formatDocumentNumber(
-        invoice.type,
-        invoicePrefix,
-        reservedInvoiceNum,
-        invoice.invoice_number
+      const fiscalYear = getFiscalYear(
+        adToBS(parseLocalDate(invoice.issued_date_ad || new Date().toISOString().slice(0, 10)))
       );
-      const invoicePayload = {
-        ...invoice,
-        invoice_number: invoiceNumber,
-        fiscal_year: fiscalYear,
-        document_serial: reservedInvoiceNum,
-      };
 
-      // Determine status based on payment
-      let finalStatus = desiredStatus;
-      if (desiredStatus === 'issued' && paidAmount > 0) {
-        const total = Number(invoice.total_amount || 0);
-        finalStatus = paidAmount >= total ? 'paid' : 'partially_paid';
-      }
-
-      // Insert invoice as draft first so trigger doesn't fire before items exist
-      const { error: invErr } = await localDb.from('invoices').insert({
-        ...invoicePayload,
-        id: invoiceId,
-        business_id: business!.id,
-        status: 'draft' as any,
-      });
-      if (invErr) throw invErr;
-
-      if (items.length > 0) {
-        const { error: itemsErr } = await localDb.from('invoice_items').insert(
-          items.map((item, idx) => ({
-            ...item,
-            invoice_id: invoiceId,
-            sort_order: idx,
-          }))
-        );
-        if (itemsErr) throw itemsErr;
-      }
-
-      // Now update status to desired value so the trigger fires with items present
-      if (finalStatus !== 'draft') {
-        const { error: statusErr } = await localDb
-          .from('invoices')
-          .update({ status: finalStatus as any, updated_at: new Date().toISOString() })
-          .eq('id', invoiceId);
-        if (statusErr) throw statusErr;
-      }
-
-      await logInvoiceEvent({
-        businessId: business!.id,
-        invoiceId,
-        userId: user?.id,
-        action: finalStatus === 'draft' ? 'draft_created' : 'issued',
-        details: { invoice_number: invoiceNumber, type: invoice.type, status: finalStatus },
-      });
-
-      // Record payment if amount received
-      if (paidAmount > 0 && desiredStatus !== 'draft') {
-        const partyId = invoicePayload.customer_id || invoicePayload.vendor_id || null;
-        const { nepalNow, formatLocalDate } = await import('@/lib/nepal-date');
-        const now = nepalNow();
-        const { adToBS, formatBSShort } = await import('@/lib/bs-calendar');
-        const bsDate = adToBS(now);
-
-        const { error: payErr } = await localDb.from('payments').insert({
+      const response = await localDb.documents.createAndIssue({
+        invoice: {
+          ...invoice,
           business_id: business!.id,
-          invoice_id: invoiceId,
-          party_id: partyId,
-          amount: paidAmount,
-          method: 'cash' as any,
-          status: 'completed' as any,
-          payment_date_ad: formatLocalDate(now),
-          payment_date_bs: formatBSShort(bsDate),
-          notes: `Payment received on invoice ${invoicePayload.invoice_number}`,
-        });
-        if (payErr) throw payErr;
-        await logInvoiceEvent({
-          businessId: business!.id,
-          invoiceId,
-          userId: user?.id,
-          action: 'payment_recorded',
-          details: { amount: paidAmount, method: 'cash', status: 'completed' },
-        });
+          fiscal_year: fiscalYear,
+          status: desiredStatus,
+          paid_amount: paidAmount,
+        },
+        items: items as Array<Record<string, unknown>>,
+        paymentAmount: paidAmount,
+      });
+      if (response.error) throw response.error;
+      if (!response.data?.id) throw new Error('Could not create document');
+
+      const serial = Number(String(response.data.invoice_number).match(/(\d+)$/)?.[1] || 0);
+      if (serial > 0) {
+        setNextDocumentNum(invoice.type, serial + 1);
       }
 
-      return invoiceId;
+      return response.data.id;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: key });
@@ -389,13 +350,31 @@ export function useInvoices() {
       if (!canDirectlyEditInvoice(existingInvoice)) {
         throw new Error('Issued VAT invoices cannot be edited directly');
       }
-      if (!canIssueVATInvoice(Boolean(invoiceUpdates.is_vat_invoice), Boolean(business?.is_vat_registered))) {
-        throw new Error('VAT invoices require a VAT-registered business');
-      }
       const nextIsVatInvoice = invoiceUpdates.is_vat_invoice ?? existingInvoice.is_vat_invoice;
       const nextBuyerPan = invoiceUpdates.buyer_pan ?? existingInvoice.buyer_pan;
-      if (!hasRequiredBuyerPan(invoiceUpdates.type || existingInvoice.type, invoiceUpdates.status || existingInvoice.status, Boolean(nextIsVatInvoice), nextBuyerPan)) {
-        throw new Error('Buyer PAN/VAT number is required to issue VAT sales invoices');
+      if (items !== undefined) {
+        const stockByItemId = await getStockByItemId(items);
+        const preflight = validateInvoiceIssuePreflight({
+          type: invoiceUpdates.type || existingInvoice.type,
+          status: invoiceUpdates.status || existingInvoice.status,
+          isVatInvoice: Boolean(nextIsVatInvoice),
+          isBusinessVatRegistered: Boolean(business?.is_vat_registered),
+          businessPan: business?.pan_number,
+          buyerPan: nextBuyerPan,
+          totals: {
+            discountAmount: Number(invoiceUpdates.discount_amount || 0),
+            taxableAmount: Number(invoiceUpdates.taxable_amount || 0),
+            vatAmount: Number(invoiceUpdates.vat_amount || 0),
+            totalAmount: Number(invoiceUpdates.total_amount || 0),
+          },
+          lines: items,
+          stockByItemId,
+          fiscalYear: invoiceUpdates.fiscal_year,
+          documentSerial: invoiceUpdates.document_serial,
+        });
+        if (!preflight.ok) {
+          throw new Error(preflight.errors[0]);
+        }
       }
 
       const { error: invErr } = await localDb

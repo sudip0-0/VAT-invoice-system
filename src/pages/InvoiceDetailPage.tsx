@@ -24,6 +24,7 @@ import PrintInvoice from '@/components/invoices/PrintInvoice';
 import { nepalTodayISO } from '@/lib/nepal-date';
 import { formatBSShort, getVATPeriod, todayBS } from '@/lib/bs-calendar';
 import { canDirectlyEditInvoice } from '@/lib/vat-compliance';
+import PageBreadcrumbs from '@/components/shared/PageBreadcrumbs';
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -137,7 +138,8 @@ export default function InvoiceDetailPage() {
   const isCreditNote = invoice.type === 'sale_return';
   const isDebitNote = invoice.type === 'purchase_return';
   const isCorrectionNote = isCreditNote || isDebitNote;
-  const backPath = isQuotation ? '/quotations' : '/invoices';
+  const backPath =
+    isQuotation ? '/quotations' : invoice.type === 'purchase' ? '/purchases' : '/invoices';
 
   const handleWhatsAppShare = () => {
     if (id) {
@@ -224,9 +226,18 @@ export default function InvoiceDetailPage() {
 
   return (
     <div className="space-y-4 animate-fade-in max-w-4xl">
+      <div className="print:hidden">
+        <PageBreadcrumbs
+          items={[
+            { label: 'Home', href: '/' },
+            { label: invoice.type === 'purchase' ? 'Purchases' : invoice.type === 'quotation' ? 'Quotations' : 'Sales', href: backPath },
+            { label: invoice.invoice_number },
+          ]}
+        />
+      </div>
       {/* Header */}
       <div className="flex items-center gap-3 print:hidden">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(backPath)}>
+        <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Back" onClick={() => navigate(backPath)}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-xl font-bold text-foreground">{invoice.invoice_number}</h1>

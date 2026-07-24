@@ -12,12 +12,19 @@ import { useParties } from '@/hooks/useParties';
 import { useItems } from '@/hooks/useItems';
 import { useBusiness } from '@/contexts/BusinessContext';
 import { formatNPR } from '@/lib/nepal-format';
-import { type BSDate, adToBS, formatBSShort, todayBS, getVATPeriod } from '@/lib/bs-calendar';
+import { type BSDate, adToBS, bsToAD, formatBSShort, todayBS, getVATPeriod } from '@/lib/bs-calendar';
 import { nepalTodayISO } from '@/lib/nepal-date';
 import BSDatePicker from '@/components/shared/BSDatePicker';
 import ItemCombobox from '@/components/invoices/ItemCombobox';
 import PartyCombobox from '@/components/invoices/PartyCombobox';
-import { STATUTORY_VAT_RATE, canIssueVATInvoice, getVATRateForTaxType, reconcileLineTotals, roundMoney } from '@/lib/vat-compliance';
+import CashCustomerDialog from '@/components/invoices/CashCustomerDialog';
+import {
+  CASH_CUSTOMER_ID,
+  CASH_CUSTOMER_NAME,
+  type CashCustomerDetails,
+  emptyCashCustomerDetails,
+} from '@/lib/cash-customer';
+import { STATUTORY_VAT_RATE, getVATRateForTaxType, reconcileLineTotals, roundMoney, validateInvoiceIssuePreflight } from '@/lib/vat-compliance';
 import {
   LINE_TAX_TYPES,
   calcDocumentLine as calcLine,
@@ -25,7 +32,11 @@ import {
   type DocumentLineItem as LineItem,
 } from '@/components/documents/document-lines';
 
-export default function PurchaseCreatePage() {
+export type DocumentEditorType = 'sale';
+
+/** Shared document create editor (sale). Purchase/quotation pages reuse document-lines helpers. */
+export default function DocumentEditor({ documentType = 'sale' }: { documentType?: DocumentEditorType }) {
+  void documentType;
   const navigate = useNavigate();
   const { toast } = useToast();
   const { business } = useBusiness();
@@ -36,18 +47,20 @@ export default function PurchaseCreatePage() {
   const todayBs = todayBS();
   const todayAd = nepalTodayISO();
 
-  const [vendorId, setVendorId] = useState('');
+  const [partyId, setPartyId] = useState('');
+  const [cashCustomerDetails, setCashCustomerDetails] = useState<CashCustomerDetails>(emptyCashCustomerDetails());
+  const [cashCustomerOpen, setCashCustomerOpen] = useState(false);
   const [issuedDateBs, setIssuedDateBs] = useState<BSDate>(todayBs);
   const [issuedDateAd, setIssuedDateAd] = useState(todayAd);
   const [dueDateBs, setDueDateBs] = useState<BSDate | null>(null);
   const [dueDateAd, setDueDateAd] = useState('');
   const [isVat, setIsVat] = useState(business?.is_vat_registered ?? false);
-  const [referenceNumber, setReferenceNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<LineItem[]>([newLine()]);
+  const [receivedAmount, setReceivedAmount] = useState<number>(0);
 
-  const vendors = useMemo(() => {
-    return parties.filter((p) => p.type === 'vendor' || p.type === 'both');
+  const filteredParties = useMemo(() => {
+    return parties.filter((p) => p.type === 'customer' || p.type === 'both');
   }, [parties]);
 
   const updateLine = useCallback((key: string, updates: Partial<LineItem>) => {
@@ -64,7 +77,7 @@ export default function PurchaseCreatePage() {
       hsn_code: item.hsn_code || null,
       name: item.name,
       unit: item.unit,
-      rate: item.purchase_price ?? item.sale_price,
+      rate: item.sale_price,
       tax_type: isVat ? 'vat_13' : 'non_taxable',
       vat_rate: isVat ? STATUTORY_VAT_RATE : 0,
       is_custom: false,
@@ -86,49 +99,76 @@ export default function PurchaseCreatePage() {
     };
   }, [lines]);
 
-  const invoiceNumber = `PUR-${String(business?.next_purchase_bill_num || 1).padStart(4, '0')}`;
+  const invoiceNumber = `${business?.invoice_prefix || 'INV'}-${String(business?.next_sales_invoice_num || business?.next_invoice_num || 1).padStart(4, '0')}`;
+
   const issuedBs = formatBSShort(issuedDateBs);
+
   const dueBs = dueDateBs ? formatBSShort(dueDateBs) : null;
 
+  const handlePartySelect = (selectedPartyId: string) => {
+    setPartyId(selectedPartyId);
+    if (selectedPartyId === CASH_CUSTOMER_ID) {
+      setCashCustomerOpen(true);
+    }
+  };
+
   const handleSave = async (status: 'draft' | 'issued') => {
-    if (!vendorId) {
-      toast({ title: 'Select a vendor', variant: 'destructive' });
+    if (!partyId) {
+      toast({ title: 'Select a party', variant: 'destructive' });
       return;
     }
     if (lines.every((l) => !l.name.trim())) {
       toast({ title: 'Add at least one item', variant: 'destructive' });
       return;
     }
-    if (!canIssueVATInvoice(isVat, Boolean(business?.is_vat_registered))) {
-      toast({ title: 'VAT purchases require a VAT-registered business', variant: 'destructive' });
+    const validLines = lines.filter((l) => l.name.trim());
+    const selectedParty = parties.find((p) => p.id === partyId);
+    const isCashCustomer = partyId === CASH_CUSTOMER_ID;
+    const buyerPan = isCashCustomer ? cashCustomerDetails.panNumber || null : selectedParty?.pan_number || null;
+    const stockByItemId = Object.fromEntries(
+      inventoryItems.map((item) => [item.id, { current_stock: Number(item.current_stock || 0), type: item.type, name: item.name }])
+    );
+    const preflight = validateInvoiceIssuePreflight({
+      type: 'sale',
+      status,
+      isVatInvoice: isVat,
+      isBusinessVatRegistered: Boolean(business?.is_vat_registered),
+      businessPan: business?.pan_number,
+      buyerPan,
+      totals,
+      lines: validLines,
+      stockByItemId,
+    });
+    if (!preflight.ok) {
+      toast({ title: 'Cannot issue invoice', description: preflight.errors[0], variant: 'destructive' });
       return;
     }
 
-    const validLines = lines.filter((l) => l.name.trim());
-    const selectedVendor = parties.find((p) => p.id === vendorId);
-
     try {
-      await createInvoice.mutateAsync({
+      const newInvoiceId = await createInvoice.mutateAsync({
         invoice: {
           invoice_number: invoiceNumber,
-          type: 'purchase',
+          type: 'sale',
           status,
-          customer_id: null,
-          vendor_id: vendorId,
-          buyer_pan: business?.pan_number || null,
+          customer_id: isCashCustomer ? null : partyId,
+          vendor_id: null,
+          buyer_name: isCashCustomer ? cashCustomerDetails.name || CASH_CUSTOMER_NAME : selectedParty?.name || null,
+          buyer_pan: buyerPan,
+          buyer_phone: isCashCustomer ? cashCustomerDetails.phone || null : selectedParty?.phone || null,
+          buyer_address: isCashCustomer ? cashCustomerDetails.address || null : [selectedParty?.address, selectedParty?.city].filter(Boolean).join(', ') || null,
           is_vat_invoice: isVat,
           issued_date_ad: issuedDateAd,
           issued_date_bs: issuedBs,
           due_date_ad: dueDateAd || null,
           due_date_bs: dueBs,
           vat_period: isVat ? getVATPeriod(adToBS(new Date(issuedDateAd))) : null,
-          reference_number: referenceNumber || null,
           sub_total: totals.subTotal,
           discount_amount: totals.discountAmount,
           taxable_amount: totals.taxableAmount,
           vat_amount: totals.vatAmount,
           total_amount: totals.totalAmount,
-          balance_due: totals.totalAmount,
+          paid_amount: receivedAmount,
+          balance_due: totals.totalAmount - receivedAmount,
           notes: notes || null,
         },
         items: validLines.map((l) => ({
@@ -147,8 +187,12 @@ export default function PurchaseCreatePage() {
           total_amount: l.total_amount,
         })),
       });
-      toast({ title: `Purchase bill ${status === 'draft' ? 'saved as draft' : 'recorded'}` });
-      navigate('/purchases');
+      toast({ title: `Sale ${status === 'draft' ? 'saved as draft' : 'issued'}` });
+      if (status === 'issued') {
+        navigate(`/invoices/${newInvoiceId}?print=1`);
+      } else {
+        navigate('/invoices');
+      }
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
@@ -156,31 +200,29 @@ export default function PurchaseCreatePage() {
 
   return (
     <div className="space-y-4 animate-fade-in max-w-4xl">
+      {/* Header */}
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/purchases')}>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/invoices')}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-xl font-bold text-foreground">New Purchase Bill</h1>
+        <h1 className="text-xl font-bold text-foreground">New Sale</h1>
         <span className="ml-auto text-sm font-mono text-muted-foreground">{invoiceNumber}</span>
       </div>
 
+      {/* Top section */}
       <div className="rounded-lg border border-border bg-card p-4 space-y-4">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <Label className="text-xs">Vendor *</Label>
+            <Label className="text-xs">Customer *</Label>
             <PartyCombobox
-              parties={vendors}
-              value={vendorId}
-              mode="vendor"
-              onSelect={setVendorId}
+              parties={filteredParties}
+              value={partyId}
+              mode="customer"
+              onSelect={handlePartySelect}
             />
           </div>
           <div>
-            <Label className="text-xs">Vendor Invoice #</Label>
-            <Input value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)} className="h-9 text-sm" placeholder="Vendor ref..." />
-          </div>
-          <div>
-            <Label className="text-xs">Bill Date (BS)</Label>
+            <Label className="text-xs">Issue Date (BS)</Label>
             <BSDatePicker
               value={issuedDateBs}
               onChange={(bs, ad) => {
@@ -214,7 +256,7 @@ export default function PurchaseCreatePage() {
                 return calcLine({ ...l, tax_type: taxType, vat_rate: getVATRateForTaxType(taxType) });
               }));
             }} className="rounded" />
-            VAT Purchase ({STATUTORY_VAT_RATE}%)
+            VAT Invoice ({STATUTORY_VAT_RATE}%)
           </label>
         )}
       </div>
@@ -246,7 +288,7 @@ export default function PurchaseCreatePage() {
                       items={inventoryItems}
                       value={line.item_id}
                       displayName={line.name}
-                      mode="purchase"
+                      mode="sale"
                       onSelect={(itemId) => selectItem(line.key, itemId)}
                       onCustom={() => updateLine(line.key, { item_id: null, hsn_code: null, name: '', is_custom: true })}
                     />
@@ -261,7 +303,9 @@ export default function PurchaseCreatePage() {
                   </td>
                   <td className="px-3 py-2">
                     <Input
-                      type="number" min="0" step="1"
+                      type="number"
+                      min="0"
+                      step="1"
                       value={line.quantity}
                       onChange={(e) => updateLine(line.key, { quantity: Number(e.target.value) })}
                       className="h-8 text-xs text-right w-16 border-0 bg-transparent shadow-none px-0"
@@ -270,7 +314,9 @@ export default function PurchaseCreatePage() {
                   <td className="px-3 py-2 text-muted-foreground">{line.unit}</td>
                   <td className="px-3 py-2">
                     <Input
-                      type="number" min="0" step="0.01"
+                      type="number"
+                      min="0"
+                      step="0.01"
                       value={line.rate}
                       onChange={(e) => updateLine(line.key, { rate: Number(e.target.value) })}
                       className="h-8 text-xs text-right w-24 border-0 bg-transparent shadow-none px-0"
@@ -278,7 +324,10 @@ export default function PurchaseCreatePage() {
                   </td>
                   <td className="px-3 py-2">
                     <Input
-                      type="number" min="0" max="100" step="0.1"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
                       value={line.discount_pct}
                       onChange={(e) => updateLine(line.key, { discount_pct: Number(e.target.value) })}
                       className="h-8 text-xs text-right w-16 border-0 bg-transparent shadow-none px-0"
@@ -355,18 +404,41 @@ export default function PurchaseCreatePage() {
             <span>Total</span>
             <span>{formatNPR(totals.totalAmount)}</span>
           </div>
+          <div className="flex justify-between items-center text-muted-foreground">
+            <span>Received</span>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={receivedAmount}
+              onChange={(e) => setReceivedAmount(Number(e.target.value))}
+              className="h-7 text-xs text-right w-28"
+            />
+          </div>
+          <div className="flex justify-between text-sm font-medium text-foreground">
+            <span>Balance Due</span>
+            <span>{formatNPR(totals.totalAmount - receivedAmount)}</span>
+          </div>
         </div>
       </div>
 
+      {/* Actions */}
       <div className="flex gap-2 justify-end pb-4">
-        <Button variant="outline" size="sm" onClick={() => navigate('/purchases')}>Cancel</Button>
+        <Button variant="outline" size="sm" onClick={() => navigate('/invoices')}>Cancel</Button>
         <Button variant="secondary" size="sm" onClick={() => handleSave('draft')} disabled={createInvoice.isPending}>
           Save Draft
         </Button>
         <Button size="sm" onClick={() => handleSave('issued')} disabled={createInvoice.isPending}>
-          Record Purchase
+          Issue Sale
         </Button>
       </div>
+
+      <CashCustomerDialog
+        open={cashCustomerOpen}
+        value={cashCustomerDetails}
+        onOpenChange={setCashCustomerOpen}
+        onSave={setCashCustomerDetails}
+      />
     </div>
   );
 }

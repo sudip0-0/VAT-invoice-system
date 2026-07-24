@@ -38,8 +38,32 @@ export interface DesktopSession {
   user: DesktopUser;
 }
 
+export interface CreateAndIssuePayload {
+  invoice: Record<string, unknown>;
+  items?: Array<Record<string, unknown>>;
+  paymentAmount?: number;
+}
+
+export interface StockAdjustPayload {
+  business_id: string;
+  item_id: string;
+  quantity: number;
+  direction: "in" | "out";
+  reason?: string;
+}
+
 export interface DesktopApi {
   query: (request: QueryRequest) => Promise<QueryResponse>;
+  documents: {
+    createAndIssue: (
+      payload: CreateAndIssuePayload
+    ) => Promise<QueryResponse<{ id: string; invoice_number: string; status: string }>>;
+  };
+  stock: {
+    adjust: (
+      payload: StockAdjustPayload
+    ) => Promise<QueryResponse<{ item_id: string; stock_before: number; stock_after: number }>>;
+  };
   auth: {
     getSession: () => Promise<QueryResponse<{ session: DesktopSession | null }>>;
     signUp: (payload: {
@@ -52,12 +76,16 @@ export interface DesktopApi {
       password: string;
     }) => Promise<QueryResponse<{ user: DesktopUser; session: DesktopSession }>>;
     signOut: () => Promise<QueryResponse<{ session: null }>>;
-    updateUser: (payload: { password?: string }) => Promise<QueryResponse<{ user: DesktopUser; session: DesktopSession }>>;
+    updateUser: (payload: {
+      password?: string;
+      currentPassword?: string;
+    }) => Promise<QueryResponse<{ user: DesktopUser; session: DesktopSession }>>;
     resetPasswordForEmail: (payload: { email: string; redirectTo?: string }) => Promise<QueryResponse<null>>;
   };
   system: {
-    openExternal: (url: string) => Promise<{ ok: boolean }>;
-    createBackup: () => Promise<QueryResponse<{ canceled: boolean; path?: string }>>;
-    restoreBackup: () => Promise<QueryResponse<{ canceled: boolean; path?: string }>>;
+    openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
+    openLogs: () => Promise<{ ok: boolean; path?: string; error?: string }>;
+    createBackup: () => Promise<QueryResponse<{ canceled: boolean; path?: string; checksum?: string }>>;
+    restoreBackup: () => Promise<QueryResponse<{ canceled: boolean; path?: string; safetyPath?: string }>>;
   };
 }

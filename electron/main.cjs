@@ -1,6 +1,20 @@
 const path = require("node:path");
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
-const { auth, backup, initializeDatabase, query } = require("./db/index.cjs");
+const { app, BrowserWindow, dialog, ipcMain, shell, session } = require("electron");
+const { auth, backup, documents, initializeDatabase, query, stock } = require("./db/index.cjs");
+const { isAllowedExternalUrl } = require("./security/open-external.cjs");
+const { logger } = require("./logger.cjs");
+
+function applyContentSecurityPolicy() {
+  const isDev = !app.isPackaged;
+  const csp = isDev
+    ? "default-src 'self'; script-src 'self' 'unsafe-inline' http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; font-src 'self' data:;"
+    : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none';";
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders, "Content-Security-Policy": [csp] };
+    callback({ responseHeaders: headers });
+  });
+}
 
 function createWindow() {
   const devServerUrl = process.env.ELECTRON_RENDERER_URL || "http://127.0.0.1:8080";
@@ -14,19 +28,21 @@ function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isAllowedExternalUrl(url)) {
+      shell.openExternal(url);
+    }
     return { action: "deny" };
   });
 
   if (app.isPackaged) {
     mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   } else {
-    console.log(`[electron] Loading renderer from ${devServerUrl}`);
+    logger.info("loading_renderer", { url: devServerUrl });
     mainWindow.loadURL(devServerUrl);
     mainWindow.webContents.openDevTools({ mode: "detach" });
   }
@@ -34,15 +50,33 @@ function createWindow() {
 
 function registerIpcHandlers() {
   ipcMain.handle("desktop:query", async (_event, request) => query(request));
+  ipcMain.handle("desktop:documents:create-and-issue", async (_event, payload) =>
+    documents.createAndIssue(payload)
+  );
+  ipcMain.handle("desktop:stock:adjust", async (_event, payload) => stock.adjust(payload));
   ipcMain.handle("desktop:auth:get-session", async () => auth.getSession());
   ipcMain.handle("desktop:auth:sign-up", async (_event, payload) => auth.signUp(payload));
   ipcMain.handle("desktop:auth:sign-in", async (_event, payload) => auth.signIn(payload));
   ipcMain.handle("desktop:auth:sign-out", async () => auth.signOut());
   ipcMain.handle("desktop:auth:update-user", async (_event, payload) => auth.updateUser(payload));
-  ipcMain.handle("desktop:auth:reset-password", async (_event, payload) => auth.resetPasswordForEmail(payload));
+  ipcMain.handle("desktop:auth:reset-password", async (_event, payload) =>
+    auth.resetPasswordForEmail(payload)
+  );
   ipcMain.handle("desktop:system:open-external", async (_event, url) => {
+    if (!isAllowedExternalUrl(url)) {
+      logger.warn("open_external_denied", { url });
+      return { ok: false, error: "Only http(s) URLs are allowed" };
+    }
     await shell.openExternal(url);
     return { ok: true };
+  });
+  ipcMain.handle("desktop:system:open-logs", async () => {
+    const dir = logger.getLogDir();
+    if (!dir) {
+      return { ok: false, error: "Logs are not initialized" };
+    }
+    await shell.openPath(dir);
+    return { ok: true, path: dir };
   });
   ipcMain.handle("desktop:system:create-backup", async () => {
     const result = await dialog.showSaveDialog({
@@ -58,7 +92,7 @@ function registerIpcHandlers() {
     const response = backup.createBackup(result.filePath);
     return response.error
       ? response
-      : { data: { canceled: false, path: result.filePath }, error: null };
+      : { data: { canceled: false, path: result.filePath, checksum: response.data?.checksum }, error: null };
   });
   ipcMain.handle("desktop:system:restore-backup", async () => {
     const result = await dialog.showOpenDialog({
@@ -74,11 +108,19 @@ function registerIpcHandlers() {
     const response = backup.restoreBackup(result.filePaths[0]);
     return response.error
       ? response
-      : { data: { canceled: false, path: result.filePaths[0] }, error: null };
+      : {
+          data: {
+            canceled: false,
+            path: result.filePaths[0],
+            safetyPath: response.data?.safetyPath,
+          },
+          error: null,
+        };
   });
 }
 
 app.whenReady().then(async () => {
+  applyContentSecurityPolicy();
   await initializeDatabase(app);
   registerIpcHandlers();
   createWindow();

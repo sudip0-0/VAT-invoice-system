@@ -15,9 +15,18 @@
 
 ## IPC Boundary
 
-- `desktop:query` handles table-style reads and writes used by the current hooks.
-- `desktop:auth:*` handles local sign-up, sign-in, session restore, sign-out, and password updates.
-- `desktop:system:*` handles desktop-only behavior such as opening external URLs and database backups/restores.
+- `desktop:query` handles table-style reads and writes used by the current hooks. Requires an active session and enforces business-membership scoping.
+- `desktop:documents:create-and-issue` creates invoice/items/payment/audit events in one main-process transaction.
+- `desktop:stock:adjust` updates item stock and stock_movements atomically.
+- `desktop:auth:*` handles local sign-up, sign-in, session restore, sign-out, and password updates (current password required to change password).
+- `desktop:system:*` handles opening http(s) URLs, logs folder, and checksummed database backups/restores.
+
+## Hardening
+
+- `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`
+- CSP headers applied in the main process
+- Schema version tracked in `app_meta.schema_version` via `electron/db/migrations`
+- Quality gates and scorecard: `SCORECARD.md`
 
 ## Renderer Strategy
 

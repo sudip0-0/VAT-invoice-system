@@ -19,11 +19,24 @@ Install dependencies with `npm install`.
 - `npm run test:watch` starts Vitest in watch mode.
 - `npx tsc --noEmit` runs a TypeScript type check without generating files.
 
+### Quality score gates (SCORECARD.md)
+
+Before advancing a remediation wave, run all three and confirm `SCORECARD.md` evidence is updated:
+
+```sh
+npm test
+npm run lint
+npx tsc --noEmit
+```
+
+Technical proxies for score items live under `src/test/score-gates/`. Soft criteria (docs tone, a11y spot checks) are recorded manually in `SCORECARD.md`.
+
 Useful desktop-specific notes:
 
 - For normal feature work on the desktop app, prefer `npm run dev:desktop` over opening `127.0.0.1` in a browser.
 - `npm run build:desktop` produces the installer and unpacked app under `release/`.
 - If you need to force a different dev port for Electron + Vite, use PowerShell like `$env:VITE_DEV_PORT=8085; npm run dev:desktop`.
+- The packaged window uses `minWidth: 1200` (desktop-first). Mobile drawer styles exist for narrower renderer debugging, but production UX targets desktop.
 
 ## Coding Style & Naming Conventions
 This project uses TypeScript, React, Tailwind CSS, and shadcn/ui. Follow the existing style: 2-space indentation, semicolons, and double quotes. Prefer the `@/` alias over long relative imports. Use `PascalCase` for React components and page files such as `InvoiceCreatePage.tsx`, `camelCase` for hooks beginning with `use`, and `kebab-case` for utility filenames in `src/lib`. Keep generated shadcn primitives in `src/components/ui` using their current lowercase filenames. Linting is defined in `eslint.config.js`; there is no separate Prettier config in this repo.

@@ -16,47 +16,13 @@ import { type BSDate, todayBS, formatBSShort, getVATPeriod, adToBS } from '@/lib
 import { nepalTodayISO } from '@/lib/nepal-date';
 import BSDatePicker from '@/components/shared/BSDatePicker';
 import ItemCombobox from '@/components/invoices/ItemCombobox';
-import { STATUTORY_VAT_RATE, calculateVATLine, canIssueVATInvoice, getVATRateForTaxType, reconcileLineTotals, roundMoney, type LineTaxType } from '@/lib/vat-compliance';
-
-const LINE_TAX_TYPES: Array<{ value: LineTaxType; label: string }> = [
-  { value: 'vat_13', label: 'VAT 13%' },
-  { value: 'zero_rated', label: 'Zero-rated' },
-  { value: 'exempt', label: 'Exempt' },
-  { value: 'non_taxable', label: 'Non-taxable' },
-];
-
-interface LineItem {
-  key: string;
-  item_id: string | null;
-  hsn_code: string | null;
-  name: string;
-  unit: string;
-  quantity: number;
-  rate: number;
-  discount_pct: number;
-  discount_amt: number;
-  tax_type: LineTaxType;
-  vat_rate: number;
-  taxable_amount: number;
-  vat_amount: number;
-  total_amount: number;
-  is_custom: boolean;
-}
-
-function newLine(): LineItem {
-  return {
-    key: crypto.randomUUID(), item_id: null, hsn_code: null, name: '', unit: 'PCS',
-    quantity: 1, rate: 0, discount_pct: 0, discount_amt: 0,
-    tax_type: 'non_taxable',
-    vat_rate: 0, taxable_amount: 0, vat_amount: 0, total_amount: 0,
-    is_custom: false,
-  };
-}
-
-function calcLine(line: LineItem): LineItem {
-  const totals = calculateVATLine(line);
-  return { ...line, ...totals };
-}
+import { STATUTORY_VAT_RATE, canIssueVATInvoice, getVATRateForTaxType, reconcileLineTotals, roundMoney } from '@/lib/vat-compliance';
+import {
+  LINE_TAX_TYPES,
+  calcDocumentLine as calcLine,
+  newDocumentLine as newLine,
+  type DocumentLineItem as LineItem,
+} from '@/components/documents/document-lines';
 
 export default function QuotationCreatePage() {
   const navigate = useNavigate();

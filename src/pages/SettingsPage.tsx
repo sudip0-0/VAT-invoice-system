@@ -10,8 +10,15 @@ import { useBusiness } from '@/contexts/BusinessContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { localDb } from '@/integrations/local-db/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Save } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Plus, Trash2, Save, ShieldCheck } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import SetupReadinessChecklist from '@/components/SetupReadinessChecklist';
+import { verifyAuditHashChain } from '@/lib/audit-chain';
+import { useInvoices } from '@/hooks/useInvoices';
+import { calculateVATLine, reconcileLineTotals, STATUTORY_VAT_RATE } from '@/lib/vat-compliance';
+import { formatBSShort, getVATPeriod, todayBS } from '@/lib/bs-calendar';
+import { nepalTodayISO } from '@/lib/nepal-date';
+import { updatePasswordSchema } from '@/lib/schemas/auth';
 
 const BUSINESS_TYPES = ['kirana', 'wholesale', 'retail', 'restaurant', 'pharmacy', 'service', 'manufacturer', 'other'];
 const TAX_TYPES = [
@@ -29,6 +36,7 @@ export default function SettingsPage() {
       <Tabs defaultValue="business">
         <TabsList className="h-8">
           <TabsTrigger value="business" className="text-xs px-3">Business Profile</TabsTrigger>
+          <TabsTrigger value="setup" className="text-xs px-3">Setup</TabsTrigger>
           <TabsTrigger value="tax" className="text-xs px-3">Tax Rates</TabsTrigger>
           <TabsTrigger value="cbms" className="text-xs px-3">CBMS</TabsTrigger>
           <TabsTrigger value="user" className="text-xs px-3">My Profile</TabsTrigger>
@@ -37,6 +45,9 @@ export default function SettingsPage() {
 
         <TabsContent value="business" className="mt-4">
           <BusinessProfileTab />
+        </TabsContent>
+        <TabsContent value="setup" className="mt-4">
+          <SetupReadinessChecklist />
         </TabsContent>
         <TabsContent value="tax" className="mt-4">
           <TaxRatesTab />
@@ -411,12 +422,16 @@ function UserProfileTab() {
   };
 
   const handleChangePassword = async () => {
-    if (!newPw || newPw.length < 6) {
-      toast({ title: 'Password must be at least 6 characters', variant: 'destructive' });
+    const parsed = updatePasswordSchema.safeParse({ currentPassword: currentPw, password: newPw });
+    if (!parsed.success) {
+      toast({ title: parsed.error.issues[0]?.message || 'Invalid password', variant: 'destructive' });
       return;
     }
     setSaving(true);
-    const { error } = await localDb.auth.updateUser({ password: newPw });
+    const { error } = await localDb.auth.updateUser({
+      currentPassword: parsed.data.currentPassword,
+      password: parsed.data.password,
+    });
     setSaving(false);
     if (error) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
@@ -456,12 +471,32 @@ function UserProfileTab() {
         <h3 className="text-sm font-semibold text-foreground">Change Password</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <Label className="text-xs">New Password</Label>
-            <Input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} className="h-9 text-sm" placeholder="Min 6 characters" />
+            <Label htmlFor="settings-current-password" className="text-xs">Current Password</Label>
+            <Input
+              id="settings-current-password"
+              type="password"
+              value={currentPw}
+              onChange={(e) => setCurrentPw(e.target.value)}
+              className="h-9 text-sm"
+              placeholder="Current password"
+              autoComplete="current-password"
+            />
+          </div>
+          <div>
+            <Label htmlFor="settings-new-password" className="text-xs">New Password</Label>
+            <Input
+              id="settings-new-password"
+              type="password"
+              value={newPw}
+              onChange={(e) => setNewPw(e.target.value)}
+              className="h-9 text-sm"
+              placeholder="Min 8 characters"
+              autoComplete="new-password"
+            />
           </div>
         </div>
         <div className="flex justify-end">
-          <Button size="sm" variant="outline" className="text-xs" onClick={handleChangePassword} disabled={saving || !newPw}>
+          <Button size="sm" variant="outline" className="text-xs" onClick={handleChangePassword} disabled={saving || !newPw || !currentPw}>
             Update Password
           </Button>
         </div>
@@ -472,7 +507,22 @@ function UserProfileTab() {
 
 function DesktopDataTab() {
   const { toast } = useToast();
-  const [busyAction, setBusyAction] = useState<'backup' | 'restore' | null>(null);
+  const { business } = useBusiness();
+  const qc = useQueryClient();
+  const { createInvoice } = useInvoices();
+  const [busyAction, setBusyAction] = useState<'backup' | 'restore' | 'verify' | 'demo' | null>(null);
+  const [auditStatus, setAuditStatus] = useState<'not_checked' | 'verified' | 'warning' | 'failed'>(
+    () => (localStorage.getItem(`audit-verification-status:${business?.id || 'none'}`) as any) || 'not_checked'
+  );
+  const [lastBackupAt, setLastBackupAt] = useState<string | null>(() =>
+    business?.id ? localStorage.getItem(`last-backup-at:${business.id}`) : null
+  );
+
+  useEffect(() => {
+    if (!business?.id) return;
+    setAuditStatus((localStorage.getItem(`audit-verification-status:${business.id}`) as any) || 'not_checked');
+    setLastBackupAt(localStorage.getItem(`last-backup-at:${business.id}`));
+  }, [business?.id]);
 
   const handleBackup = async () => {
     if (!window.desktopApi) {
@@ -490,6 +540,13 @@ function DesktopDataTab() {
     }
 
     if (!response.data?.canceled) {
+      const timestamp = new Date().toISOString();
+      if (business?.id) {
+        localStorage.setItem(`last-backup-at:${business.id}`, timestamp);
+        localStorage.removeItem(`backup-reminder-ack:${business.id}`);
+        setLastBackupAt(timestamp);
+        qc.invalidateQueries({ queryKey: ['setup-readiness', business.id] });
+      }
       toast({ title: 'Backup created', description: response.data?.path || 'Database backup saved.' });
     }
   };
@@ -499,6 +556,11 @@ function DesktopDataTab() {
       toast({ title: 'Desktop runtime unavailable', description: 'Restore is only available in the Electron desktop app.', variant: 'destructive' });
       return;
     }
+
+    const confirmed = window.confirm(
+      'Restore will replace the current database. A pre-restore safety copy is created automatically. Backups include local password hashes — only restore trusted files. Continue?'
+    );
+    if (!confirmed) return;
 
     setBusyAction('restore');
     const response = await window.desktopApi.system.restoreBackup();
@@ -510,9 +572,318 @@ function DesktopDataTab() {
     }
 
     if (!response.data?.canceled) {
-      toast({ title: 'Backup restored', description: 'Restart the app and verify invoice audit hash chains before relying on restored records.' });
+      if (business?.id) {
+        localStorage.setItem(`audit-verification-status:${business.id}`, 'warning');
+        setAuditStatus('warning');
+      }
+      toast({
+        title: 'Backup restored',
+        description: response.data?.safetyPath
+          ? `Safety copy: ${response.data.safetyPath}. Restart and verify audit chains.`
+          : 'Restart the app and verify invoice audit hash chains before relying on restored records.',
+      });
     }
   };
+
+  const handleOpenLogs = async () => {
+    if (!window.desktopApi?.system.openLogs) {
+      toast({ title: 'Desktop runtime unavailable', variant: 'destructive' });
+      return;
+    }
+    const result = await window.desktopApi.system.openLogs();
+    if (!result.ok) {
+      toast({ title: 'Could not open logs', description: result.error, variant: 'destructive' });
+    }
+  };
+
+  const handleAcknowledgeBackupReminder = () => {
+    if (!business?.id) return;
+    localStorage.setItem(`backup-reminder-ack:${business.id}`, 'true');
+    qc.invalidateQueries({ queryKey: ['setup-readiness', business.id] });
+    toast({ title: 'Backup reminder acknowledged' });
+  };
+
+  const handleVerifyAuditChains = async () => {
+    if (!business?.id) return;
+    try {
+      setBusyAction('verify');
+      const { data, error } = await localDb
+        .from('invoice_events')
+        .select('*')
+        .eq('business_id', business.id)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+
+      const grouped = new Map<string, any[]>();
+      for (const event of data || []) {
+        const list = grouped.get(event.invoice_id) || [];
+        list.push(event);
+        grouped.set(event.invoice_id, list);
+      }
+
+      let failed = false;
+      let warning = grouped.size === 0;
+      for (const events of grouped.values()) {
+        const result = await verifyAuditHashChain(events);
+        if (!result.valid) {
+          failed = true;
+          break;
+        }
+      }
+
+      const nextStatus = failed ? 'failed' : warning ? 'warning' : 'verified';
+      localStorage.setItem(`audit-verification-status:${business.id}`, nextStatus);
+      setAuditStatus(nextStatus);
+      toast({
+        title: nextStatus === 'verified' ? 'Audit chains verified' : nextStatus === 'warning' ? 'No audit events found' : 'Audit verification failed',
+        variant: nextStatus === 'failed' ? 'destructive' : undefined,
+      });
+    } catch (e: any) {
+      setAuditStatus('failed');
+      toast({ title: 'Audit verification failed', description: e.message, variant: 'destructive' });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleCreateDemoData = async () => {
+    if (!business?.id) return;
+    if (!business.is_vat_registered || !business.pan_number?.trim()) {
+      toast({ title: 'Demo data needs a VAT test business', description: 'Mark this test business as VAT registered and add a 9-digit PAN before creating VAT demo data.', variant: 'destructive' });
+      return;
+    }
+    try {
+      setBusyAction('demo');
+      const { data: existingSample, error: existingErr } = await localDb
+        .from('parties')
+        .select('id')
+        .eq('business_id', business.id)
+        .ilike('name', 'Sample VAT Customer%')
+        .limit(1);
+      if (existingErr) throw existingErr;
+      if (existingSample?.length) {
+        toast({ title: 'Demo data already exists', description: 'Sample records were not added again.' });
+        return;
+      }
+
+      const customerId = crypto.randomUUID();
+      const vendorId = crypto.randomUUID();
+      const productId = crypto.randomUUID();
+      const serviceId = crypto.randomUUID();
+      const todayAd = nepalTodayISO();
+      const todayBs = todayBS();
+      const todayBsText = formatBSShort(todayBs);
+      const now = new Date().toISOString();
+
+      await localDb.from('parties').insert([
+        {
+          id: customerId,
+          business_id: business.id,
+          type: 'customer',
+          name: 'Sample VAT Customer',
+          phone: '9800000000',
+          pan_number: '123456789',
+          address: 'Sample Market Road',
+          city: 'Kathmandu',
+          notes: 'Sample/test data',
+        },
+        {
+          id: vendorId,
+          business_id: business.id,
+          type: 'vendor',
+          name: 'Sample VAT Vendor',
+          phone: '9811111111',
+          pan_number: '987654321',
+          address: 'Sample Supplier Marg',
+          city: 'Lalitpur',
+          notes: 'Sample/test data',
+        },
+      ]);
+
+      await localDb.from('items').insert([
+        {
+          id: productId,
+          business_id: business.id,
+          code: 'SAMPLE-PROD',
+          name: 'Sample Taxable Product',
+          description: 'Sample/test data',
+          type: 'product',
+          unit: 'PCS',
+          purchase_price: 700,
+          sale_price: 1000,
+          opening_stock: 25,
+          current_stock: 25,
+          low_stock_alert: 5,
+          hsn_code: 'SAMPLE',
+        },
+        {
+          id: serviceId,
+          business_id: business.id,
+          code: 'SAMPLE-SVC',
+          name: 'Sample Service',
+          description: 'Sample/test data',
+          type: 'service',
+          unit: 'JOB',
+          sale_price: 1500,
+          opening_stock: 0,
+          current_stock: 0,
+          hsn_code: 'SERVICE',
+        },
+      ]);
+
+      const saleLine = calculateVATLine({ quantity: 2, rate: 1000, tax_type: 'vat_13' });
+      const saleTotals = reconcileLineTotals([saleLine]);
+      const saleId = await createInvoice.mutateAsync({
+        invoice: {
+          invoice_number: `${business.invoice_prefix || 'INV'}-${String(business.next_sales_invoice_num || business.next_invoice_num || 1).padStart(4, '0')}`,
+          type: 'sale',
+          status: 'issued',
+          customer_id: customerId,
+          buyer_name: 'Sample VAT Customer',
+          buyer_pan: '123456789',
+          buyer_phone: '9800000000',
+          buyer_address: 'Sample Market Road, Kathmandu',
+          is_vat_invoice: true,
+          issued_date_ad: todayAd,
+          issued_date_bs: todayBsText,
+          vat_period: getVATPeriod(todayBs),
+          sub_total: 2000,
+          discount_amount: saleTotals.discount_amount,
+          taxable_amount: saleTotals.taxable_amount,
+          vat_amount: saleTotals.vat_amount,
+          total_amount: saleTotals.total_amount,
+          paid_amount: 1000,
+          balance_due: saleTotals.total_amount - 1000,
+          notes: 'Sample/test data',
+        },
+        items: [{
+          item_id: productId,
+          hsn_code: 'SAMPLE',
+          name: 'Sample Taxable Product',
+          unit: 'PCS',
+          quantity: 2,
+          rate: 1000,
+          discount_pct: 0,
+          discount_amt: saleLine.discount_amt,
+          tax_type: 'vat_13',
+          vat_rate: STATUTORY_VAT_RATE,
+          taxable_amount: saleLine.taxable_amount,
+          vat_amount: saleLine.vat_amount,
+          total_amount: saleLine.total_amount,
+        }],
+      });
+
+      const purchaseLine = calculateVATLine({ quantity: 3, rate: 700, tax_type: 'vat_13' });
+      const purchaseTotals = reconcileLineTotals([purchaseLine]);
+      await createInvoice.mutateAsync({
+        invoice: {
+          invoice_number: `PUR-${String(business.next_purchase_bill_num || 1).padStart(4, '0')}`,
+          type: 'purchase',
+          status: 'issued',
+          vendor_id: vendorId,
+          buyer_name: 'Sample VAT Vendor',
+          buyer_pan: '987654321',
+          is_vat_invoice: true,
+          issued_date_ad: todayAd,
+          issued_date_bs: todayBsText,
+          vat_period: getVATPeriod(todayBs),
+          sub_total: 2100,
+          discount_amount: purchaseTotals.discount_amount,
+          taxable_amount: purchaseTotals.taxable_amount,
+          vat_amount: purchaseTotals.vat_amount,
+          total_amount: purchaseTotals.total_amount,
+          paid_amount: 0,
+          balance_due: purchaseTotals.total_amount,
+          notes: 'Sample/test data',
+        },
+        items: [{
+          item_id: productId,
+          hsn_code: 'SAMPLE',
+          name: 'Sample Taxable Product',
+          unit: 'PCS',
+          quantity: 3,
+          rate: 700,
+          discount_pct: 0,
+          discount_amt: purchaseLine.discount_amt,
+          tax_type: 'vat_13',
+          vat_rate: STATUTORY_VAT_RATE,
+          taxable_amount: purchaseLine.taxable_amount,
+          vat_amount: purchaseLine.vat_amount,
+          total_amount: purchaseLine.total_amount,
+        }],
+      });
+
+      await createInvoice.mutateAsync({
+        invoice: {
+          invoice_number: `CN-${String(business.next_credit_note_num || 1).padStart(4, '0')}`,
+          type: 'sale_return',
+          status: 'draft',
+          customer_id: customerId,
+          buyer_name: 'Sample VAT Customer',
+          buyer_pan: '123456789',
+          is_vat_invoice: true,
+          issued_date_ad: todayAd,
+          issued_date_bs: todayBsText,
+          vat_period: getVATPeriod(todayBs),
+          sub_total: 1000,
+          discount_amount: 0,
+          taxable_amount: 1000,
+          vat_amount: 130,
+          total_amount: 1130,
+          paid_amount: 0,
+          balance_due: 0,
+          original_invoice_id: saleId,
+          original_invoice_number: 'Sample sale invoice',
+          correction_reason: 'Sample/test data partial return review',
+          correction_type: 'credit',
+          notes: 'Sample/test data',
+          reference_number: 'Sample sale invoice',
+        },
+        items: [{
+          item_id: productId,
+          hsn_code: 'SAMPLE',
+          name: 'Sample Taxable Product',
+          unit: 'PCS',
+          quantity: 1,
+          rate: 1000,
+          discount_pct: 0,
+          discount_amt: 0,
+          tax_type: 'vat_13',
+          vat_rate: STATUTORY_VAT_RATE,
+          taxable_amount: 1000,
+          vat_amount: 130,
+          total_amount: 1130,
+        }],
+      });
+
+      await localDb.from('expenses').insert({
+        business_id: business.id,
+        category: 'Sample',
+        description: 'Sample/test data office expense',
+        amount: 500,
+        expense_date_ad: todayAd,
+        expense_date_bs: todayBsText,
+        payment_method: 'cash',
+        notes: 'Sample/test data',
+        created_at: now,
+        updated_at: now,
+      });
+
+      qc.invalidateQueries();
+      toast({ title: 'Demo data created', description: 'Sample customer, vendor, items, invoices, payment, correction note, and expense were added.' });
+    } catch (e: any) {
+      toast({ title: 'Demo data failed', description: e.message, variant: 'destructive' });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const auditStatusLabel = {
+    not_checked: 'Not checked',
+    verified: 'Verified',
+    warning: 'Warning',
+    failed: 'Failed',
+  }[auditStatus];
 
   return (
     <div className="space-y-4">
@@ -523,12 +894,48 @@ function DesktopDataTab() {
             This desktop app stores invoices, stock, reports, and settings in a local SQLite database on this machine.
           </p>
         </div>
+        <div className="grid gap-2 text-xs">
+          <div className="flex items-center justify-between rounded-md border border-border p-3">
+            <div>
+              <p className="font-medium text-foreground">Last backup</p>
+              <p className="text-muted-foreground">{lastBackupAt ? new Date(lastBackupAt).toLocaleString() : 'No backup recorded on this device.'}</p>
+            </div>
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={handleAcknowledgeBackupReminder}>
+              Acknowledge
+            </Button>
+          </div>
+          <div className="flex items-center justify-between rounded-md border border-border p-3">
+            <div>
+              <p className="font-medium text-foreground">Audit verification</p>
+              <p className="text-muted-foreground">Status: {auditStatusLabel}</p>
+            </div>
+            {auditStatus === 'verified' ? (
+              <CheckCircle2 className="h-4 w-4 text-success" />
+            ) : auditStatus === 'failed' ? (
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+            ) : (
+              <ShieldCheck className="h-4 w-4 text-warning" />
+            )}
+          </div>
+        </div>
         <div className="flex flex-wrap gap-2">
+          <p className="text-xs text-muted-foreground sm:col-span-2">
+            Backups are checksummed (`.sha256` sidecar) and include local account password hashes. Store them privately. Installer builds are unsigned in this channel — see TESTER_GUIDE.
+          </p>
           <Button size="sm" className="text-xs" onClick={handleBackup} disabled={busyAction !== null}>
             {busyAction === 'backup' ? 'Creating Backup...' : 'Create Backup'}
           </Button>
           <Button size="sm" variant="outline" className="text-xs" onClick={handleRestore} disabled={busyAction !== null}>
             {busyAction === 'restore' ? 'Restoring Backup...' : 'Restore Backup'}
+          </Button>
+          <Button size="sm" variant="outline" className="text-xs" onClick={handleOpenLogs} disabled={busyAction !== null}>
+            Open Logs Folder
+          </Button>
+          <Button size="sm" variant="outline" className="text-xs" onClick={handleVerifyAuditChains} disabled={busyAction !== null}>
+            {busyAction === 'verify' ? 'Verifying...' : 'Verify Audit Chains'}
+          </Button>
+          <Button size="sm" variant="outline" className="text-xs" onClick={handleCreateDemoData} disabled={busyAction !== null}>
+            {busyAction === 'demo' ? 'Creating Demo...' : 'Create Demo Data'}
           </Button>
         </div>
       </div>

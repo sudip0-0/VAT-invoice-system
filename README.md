@@ -5,7 +5,7 @@ Nepal-focused billing, VAT invoicing, inventory, and reporting app for small bus
 ## Highlights
 
 - Offline email/password authentication in the desktop app
-- Multi-business support with role-based access
+- Multi-business support with session + business-membership scoping (IPC data access is limited to businesses the signed-in user belongs to)
 - Business onboarding with default tax-rate setup
 - Sales invoices, purchase bills, quotations, and issued-invoice credit/debit correction notes
 - VAT-aware line items, BS/AD dates, Nepal timezone handling, and NPR formatting
@@ -79,6 +79,8 @@ npm run preview
 - The desktop auth adapter handles email/password login locally.
 - Each user can belong to one or more businesses through `business_users`.
 - The active business is stored on `profiles.active_business_id`.
+- Electron data IPC requires an active session and enforces membership scoping (not a fine-grained RBAC matrix).
+- Quality targets and wave gates live in `SCORECARD.md`.
 
 ### Sales, purchases, quotations, and correction notes
 

@@ -2,23 +2,13 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const initSqlJs = require("sql.js");
-
-const QUERYABLE_TABLES = new Set([
-  "profiles",
-  "businesses",
-  "business_users",
-  "tax_rates",
-  "item_categories",
-  "items",
-  "parties",
-  "invoices",
-  "invoice_items",
-  "invoice_events",
-  "document_sequences",
-  "payments",
-  "expenses",
-  "stock_movements",
-]);
+const { logger } = require("../logger.cjs");
+const { SCHEMA_VERSION, runMigrations } = require("./migrations/runner.cjs");
+const {
+  QUERYABLE_TABLES,
+  TABLES_WITH_BUSINESS_ID,
+  CHILD_OWNERSHIP,
+} = require("./constants.cjs");
 
 const BOOLEAN_COLUMNS = {
   businesses: ["is_vat_registered"],
@@ -62,19 +52,16 @@ function getSchemaSql() {
   return fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
 }
 
-async function initializeDatabase(app) {
-  if (db) {
-    return { dbPath };
-  }
-
-  appInstance = app;
+async function openDatabaseAt(filePath, { userDataDirForLogs } = {}) {
   SQL = await initSqlJs({
     locateFile: (file) => require.resolve(`sql.js/dist/${file}`),
   });
 
-  const userDataDir = app.getPath("userData");
-  fs.mkdirSync(userDataDir, { recursive: true });
-  dbPath = path.join(userDataDir, "vat-invoice.sqlite");
+  dbPath = filePath;
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  if (userDataDirForLogs) {
+    logger.init(userDataDirForLogs);
+  }
 
   if (fs.existsSync(dbPath)) {
     db = new SQL.Database(fs.readFileSync(dbPath));
@@ -84,13 +71,43 @@ async function initializeDatabase(app) {
 
   db.exec(getSchemaSql());
   runSchemaMigrations();
+  setMeta("schema_version", String(SCHEMA_VERSION));
   saveDatabase();
   return { dbPath };
 }
 
+async function initializeDatabase(app) {
+  if (db) {
+    return { dbPath };
+  }
+
+  appInstance = app;
+  const userDataDir = app.getPath("userData");
+  fs.mkdirSync(userDataDir, { recursive: true });
+  return openDatabaseAt(path.join(userDataDir, "vat-invoice.sqlite"), {
+    userDataDirForLogs: userDataDir,
+  });
+}
+
+async function initializeDatabaseForTests(filePath) {
+  db = null;
+  SQL = null;
+  dbPath = "";
+  appInstance = null;
+  return openDatabaseAt(filePath, { userDataDirForLogs: path.dirname(filePath) });
+}
+
 function saveDatabase() {
   ensureInitialized();
-  fs.writeFileSync(dbPath, Buffer.from(db.export()));
+  const payload = Buffer.from(db.export());
+  const tempPath = `${dbPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, payload);
+  try {
+    fs.renameSync(tempPath, dbPath);
+  } catch {
+    fs.copyFileSync(tempPath, dbPath);
+    fs.unlinkSync(tempPath);
+  }
 }
 
 function columnExists(table, column) {
@@ -114,28 +131,11 @@ function addColumnIfMissing(table, column, definition) {
 }
 
 function runSchemaMigrations() {
-  addColumnIfMissing("invoices", "buyer_name", "TEXT");
-  addColumnIfMissing("invoices", "buyer_phone", "TEXT");
-  addColumnIfMissing("invoices", "buyer_address", "TEXT");
-  addColumnIfMissing("invoice_items", "hsn_code", "TEXT");
-  addColumnIfMissing("businesses", "next_sales_invoice_num", "INTEGER NOT NULL DEFAULT 1");
-  addColumnIfMissing("businesses", "next_purchase_bill_num", "INTEGER NOT NULL DEFAULT 1");
-  addColumnIfMissing("businesses", "next_quotation_num", "INTEGER NOT NULL DEFAULT 1");
-  addColumnIfMissing("businesses", "next_credit_note_num", "INTEGER NOT NULL DEFAULT 1");
-  addColumnIfMissing("businesses", "next_debit_note_num", "INTEGER NOT NULL DEFAULT 1");
-  addColumnIfMissing("invoices", "print_count", "INTEGER NOT NULL DEFAULT 0");
-  addColumnIfMissing("invoices", "last_printed_at", "TEXT");
-  addColumnIfMissing("invoices", "cancellation_reason", "TEXT");
-  addColumnIfMissing("invoices", "cancelled_at", "TEXT");
-  addColumnIfMissing("invoices", "fiscal_year", "TEXT");
-  addColumnIfMissing("invoices", "document_serial", "INTEGER");
-  addColumnIfMissing("invoices", "original_invoice_id", "TEXT");
-  addColumnIfMissing("invoices", "original_invoice_number", "TEXT");
-  addColumnIfMissing("invoices", "correction_reason", "TEXT");
-  addColumnIfMissing("invoices", "correction_type", "TEXT");
-  addColumnIfMissing("invoice_items", "tax_type", "TEXT NOT NULL DEFAULT 'vat_13'");
-  addColumnIfMissing("invoice_events", "previous_hash", "TEXT");
-  addColumnIfMissing("invoice_events", "event_hash", "TEXT");
+  runMigrations({
+    columnExists,
+    runStatement,
+    quoteIdentifier,
+  });
 }
 
 function createResponse(data = null, error = null, count = null) {
@@ -941,6 +941,122 @@ function selectProjection(table, rows, request) {
   return request.single ? projected[0] || null : projected;
 }
 
+function getAllowedBusinessIds(userId) {
+  return readFilteredRows("business_users", [
+    { type: "eq", column: "user_id", value: userId },
+    { type: "eq", column: "is_active", value: true },
+  ]).map((row) => row.business_id);
+}
+
+function assertSession() {
+  const user = getCurrentUserRow();
+  if (!user) {
+    throw new Error("Unauthorized");
+  }
+  return user;
+}
+
+function assertBusinessAccess(userId, businessId) {
+  if (!businessId || !getAllowedBusinessIds(userId).includes(businessId)) {
+    throw new Error("Forbidden: business access denied");
+  }
+}
+
+function allowedInvoiceIds(userId) {
+  const businessIds = getAllowedBusinessIds(userId);
+  if (businessIds.length === 0) {
+    return [];
+  }
+  return readFilteredRows("invoices", [{ type: "in", column: "business_id", value: businessIds }]).map(
+    (row) => row.id
+  );
+}
+
+function applyMembershipScope(table, request, user) {
+  const action = request.action || "select";
+  const filters = [...(request.filters || [])];
+  const allowedBusinessIds = getAllowedBusinessIds(user.id);
+
+  if (table === "profiles") {
+    filters.push({ type: "eq", column: "user_id", value: user.id });
+    if (action === "insert") {
+      const payloads = Array.isArray(request.payload) ? request.payload : [request.payload];
+      for (const payload of payloads) {
+        if (payload?.user_id && payload.user_id !== user.id) {
+          throw new Error("Forbidden: cannot write another user's profile");
+        }
+        if (payload) {
+          payload.user_id = user.id;
+        }
+      }
+    }
+    return { ...request, filters };
+  }
+
+  if (table === "business_users") {
+    filters.push({ type: "eq", column: "user_id", value: user.id });
+    if (action === "insert") {
+      const payloads = Array.isArray(request.payload) ? request.payload : [request.payload];
+      for (const payload of payloads) {
+        if (!payload?.business_id) {
+          throw new Error("business_id is required");
+        }
+        if (payload.user_id && payload.user_id !== user.id) {
+          throw new Error("Forbidden: cannot create membership for another user");
+        }
+        payload.user_id = user.id;
+      }
+    }
+    return { ...request, filters };
+  }
+
+  if (table === "businesses") {
+    if (action === "insert") {
+      return { ...request, filters };
+    }
+    filters.push({ type: "in", column: "id", value: allowedBusinessIds.length ? allowedBusinessIds : ["__none__"] });
+    return { ...request, filters };
+  }
+
+  if (CHILD_OWNERSHIP[table]) {
+    const invoiceIds = allowedInvoiceIds(user.id);
+    filters.push({
+      type: "in",
+      column: CHILD_OWNERSHIP[table].foreignKey,
+      value: invoiceIds.length ? invoiceIds : ["__none__"],
+    });
+    if (action === "insert") {
+      const payloads = Array.isArray(request.payload) ? request.payload : [request.payload];
+      for (const payload of payloads) {
+        const parentId = payload?.[CHILD_OWNERSHIP[table].foreignKey];
+        const parent = readFilteredRows(CHILD_OWNERSHIP[table].parentTable, [
+          { type: "eq", column: "id", value: parentId },
+        ])[0];
+        if (!parent || !allowedBusinessIds.includes(parent.business_id)) {
+          throw new Error("Forbidden: parent document access denied");
+        }
+      }
+    }
+    return { ...request, filters };
+  }
+
+  if (TABLES_WITH_BUSINESS_ID.has(table)) {
+    filters.push({
+      type: "in",
+      column: "business_id",
+      value: allowedBusinessIds.length ? allowedBusinessIds : ["__none__"],
+    });
+    if (action === "insert") {
+      const payloads = Array.isArray(request.payload) ? request.payload : [request.payload];
+      for (const payload of payloads) {
+        assertBusinessAccess(user.id, payload?.business_id);
+      }
+    }
+  }
+
+  return { ...request, filters };
+}
+
 async function query(request) {
   try {
     ensureInitialized();
@@ -948,17 +1064,19 @@ async function query(request) {
       throw new Error(`Unsupported table: ${request.table}`);
     }
 
+    const user = assertSession();
     const table = request.table;
+    const scoped = applyMembershipScope(table, request, user);
     const normalizedRequest = {
-      action: request.action || "select",
-      selection: request.selection || "*",
-      filters: request.filters || [],
-      orderBy: request.orderBy || null,
-      limit: request.limit ?? null,
-      offset: request.offset ?? null,
-      count: request.count ?? null,
-      single: Boolean(request.single),
-      payload: request.payload ? sanitizeValue(request.payload) : null,
+      action: scoped.action || "select",
+      selection: scoped.selection || "*",
+      filters: scoped.filters || [],
+      orderBy: scoped.orderBy || null,
+      limit: scoped.limit ?? null,
+      offset: scoped.offset ?? null,
+      count: scoped.count ?? null,
+      single: Boolean(scoped.single),
+      payload: scoped.payload ? sanitizeValue(scoped.payload) : null,
     };
 
     if (normalizedRequest.action === "select") {
@@ -968,6 +1086,7 @@ async function query(request) {
 
     return createResponse(mutateRows(table, normalizedRequest));
   } catch (error) {
+    logger.warn("query_denied_or_failed", { table: request?.table, message: error.message });
     return createResponse(null, error);
   }
 }
@@ -979,9 +1098,27 @@ function hashPassword(password) {
 }
 
 function verifyPassword(password, encodedHash) {
-  const [salt, storedHash] = String(encodedHash).split(":");
-  const calculatedHash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return crypto.timingSafeEqual(Buffer.from(storedHash, "hex"), Buffer.from(calculatedHash, "hex"));
+  try {
+    const [salt, storedHash] = String(encodedHash || "").split(":");
+    if (!salt || !storedHash || storedHash.length % 2 !== 0) {
+      return false;
+    }
+    const calculatedHash = crypto.scryptSync(password, salt, 64).toString("hex");
+    const stored = Buffer.from(storedHash, "hex");
+    const calculated = Buffer.from(calculatedHash, "hex");
+    if (stored.length !== calculated.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(stored, calculated);
+  } catch {
+    return false;
+  }
+}
+
+function assertPasswordPolicy(password) {
+  if (!password || String(password).length < 8) {
+    throw new Error("Password must be at least 8 characters");
+  }
 }
 
 function getMeta(key) {
@@ -1053,6 +1190,7 @@ function signUp(payload) {
     if (!email || !password) {
       throw new Error("Email and password are required");
     }
+    assertPasswordPolicy(password);
 
     const existing = readAllRows("app_users").find((row) => row.email.toLowerCase() === String(email).toLowerCase());
     if (existing) {
@@ -1083,6 +1221,7 @@ function signUp(payload) {
         setMeta("current_user_id", userId);
 
         const userRow = readAllRows("app_users").find((row) => row.id === userId);
+        logger.info("auth_sign_up", { email: String(email).trim().toLowerCase() });
         return {
           user: buildUser(userRow),
           session: buildSession(userRow),
@@ -1090,6 +1229,7 @@ function signUp(payload) {
       })
     );
   } catch (error) {
+    logger.warn("auth_sign_up_failed", { message: error.message });
     return createResponse(null, error);
   }
 }
@@ -1110,6 +1250,7 @@ function signIn(payload) {
     return createResponse(
       withTransaction(() => {
         setMeta("current_user_id", userRow.id);
+        logger.info("auth_sign_in", { email: userRow.email });
         return {
           user: buildUser(userRow),
           session: buildSession(userRow),
@@ -1117,6 +1258,7 @@ function signIn(payload) {
       })
     );
   } catch (error) {
+    logger.warn("auth_sign_in_failed", { email: payload?.email, message: error.message });
     return createResponse(null, error);
   }
 }
@@ -1151,6 +1293,13 @@ function updateUser(payload) {
         };
 
         if (payload?.password) {
+          assertPasswordPolicy(payload.password);
+          if (!payload.currentPassword) {
+            throw new Error("Current password is required");
+          }
+          if (!verifyPassword(payload.currentPassword, currentUser.password_hash)) {
+            throw new Error("Current password is incorrect");
+          }
           nextUser.password_hash = hashPassword(payload.password);
         }
 
@@ -1162,6 +1311,7 @@ function updateUser(payload) {
       })
     );
   } catch (error) {
+    logger.warn("auth_update_user_failed", { message: error.message });
     return createResponse(null, error);
   }
 }
@@ -1170,34 +1320,352 @@ function resetPasswordForEmail() {
   return createResponse(null, new Error("Email reset is not available in the offline desktop app"));
 }
 
+function sha256FileBuffer(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
 function createBackup(filePath) {
   try {
     ensureInitialized();
-    fs.writeFileSync(filePath, Buffer.from(db.export()));
-    return createResponse({ path: filePath });
+    assertSession();
+    const exported = Buffer.from(db.export());
+    fs.writeFileSync(filePath, exported);
+    const checksum = sha256FileBuffer(exported);
+    fs.writeFileSync(`${filePath}.sha256`, `${checksum}  ${path.basename(filePath)}\n`, "utf8");
+    logger.info("backup_created", { path: filePath });
+    return createResponse({ path: filePath, checksum });
   } catch (error) {
+    logger.error("backup_failed", { message: error.message });
     return createResponse(null, error);
+  }
+}
+
+function getSchemaVersionFromDb(database) {
+  try {
+    const statement = database.prepare(`SELECT value FROM app_meta WHERE key = ?`);
+    statement.bind(["schema_version"]);
+    const hasValue = statement.step();
+    const value = hasValue ? Number(statement.getAsObject().value || 0) : 0;
+    statement.free();
+    return value;
+  } catch {
+    return 0;
   }
 }
 
 function restoreBackup(filePath) {
   try {
+    ensureInitialized();
+    assertSession();
     if (!fs.existsSync(filePath)) {
       throw new Error("Backup file not found");
     }
-    db = new SQL.Database(fs.readFileSync(filePath));
+
+    const checksumPath = `${filePath}.sha256`;
+    const fileBuffer = fs.readFileSync(filePath);
+    if (fs.existsSync(checksumPath)) {
+      const expected = String(fs.readFileSync(checksumPath, "utf8").split(/\s+/)[0] || "").trim();
+      const actual = sha256FileBuffer(fileBuffer);
+      if (!expected || expected !== actual) {
+        throw new Error("Backup checksum mismatch");
+      }
+    }
+
+    const candidate = new SQL.Database(fileBuffer);
+    const backupVersion = getSchemaVersionFromDb(candidate);
+    if (backupVersion > SCHEMA_VERSION) {
+      candidate.close();
+      throw new Error(
+        `Backup schema version ${backupVersion} is newer than app version ${SCHEMA_VERSION}`
+      );
+    }
+
+    const safetyPath = `${dbPath}.pre-restore-${Date.now()}.sqlite`;
+    fs.copyFileSync(dbPath, safetyPath);
+
+    db = candidate;
     db.exec(getSchemaSql());
     runSchemaMigrations();
+    setMeta("schema_version", String(SCHEMA_VERSION));
     saveDatabase();
-    return createResponse({ path: filePath });
+    logger.info("backup_restored", { path: filePath, safetyPath });
+    return createResponse({ path: filePath, safetyPath });
   } catch (error) {
+    logger.error("backup_restore_failed", { message: error.message });
+    return createResponse(null, error);
+  }
+}
+
+function syncAuditHash(input) {
+  const payload = JSON.stringify({
+    business_id: input.business_id,
+    invoice_id: input.invoice_id,
+    action: input.action,
+    details: input.details || "",
+    created_at: input.created_at,
+    previous_hash: input.previous_hash || "",
+  });
+  return crypto.createHash("sha256").update(payload).digest("hex");
+}
+
+function appendInvoiceEvent({ businessId, invoiceId, userId, action, details }) {
+  const existing = readFilteredRows("invoice_events", [
+    { type: "eq", column: "invoice_id", value: invoiceId },
+  ]);
+  existing.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  const previousHash = existing.length ? existing[existing.length - 1].event_hash || "" : "";
+  const createdAt = nowIso();
+  const detailsText = details ? JSON.stringify(details) : null;
+  const eventHash = syncAuditHash({
+    business_id: businessId,
+    invoice_id: invoiceId,
+    action,
+    details: detailsText,
+    created_at: createdAt,
+    previous_hash: previousHash,
+  });
+  insertRow(
+    "invoice_events",
+    applyInsertDefaults("invoice_events", {
+      business_id: businessId,
+      invoice_id: invoiceId,
+      user_id: userId || null,
+      action,
+      details: detailsText,
+      previous_hash: previousHash,
+      event_hash: eventHash,
+      created_at: createdAt,
+    })
+  );
+}
+
+function formatDocumentNumber(type, invoicePrefix, nextInvoiceNum, fallback) {
+  const serial = String(nextInvoiceNum || 1).padStart(4, "0");
+  if (type === "purchase") return `PUR-${serial}`;
+  if (type === "quotation") return `QTN-${serial}`;
+  if (type === "sale_return") return `CN-${serial}`;
+  if (type === "purchase_return") return `DN-${serial}`;
+  if (type === "sale") return `${invoicePrefix || "INV"}-${serial}`;
+  return fallback || `${invoicePrefix || "INV"}-${serial}`;
+}
+
+function getDocumentCounterColumn(type) {
+  if (type === "purchase") return "next_purchase_bill_num";
+  if (type === "quotation") return "next_quotation_num";
+  if (type === "sale_return") return "next_credit_note_num";
+  if (type === "purchase_return") return "next_debit_note_num";
+  return "next_sales_invoice_num";
+}
+
+function reserveDocumentNumber(businessId, type, fiscalYearInput) {
+  const fiscalYear = String(fiscalYearInput || nowIso().slice(0, 4));
+  const documentType = type || "sale";
+  let sequence = readFilteredRows("document_sequences", [
+    { type: "eq", column: "business_id", value: businessId },
+    { type: "eq", column: "document_type", value: documentType },
+    { type: "eq", column: "fiscal_year", value: fiscalYear },
+  ])[0];
+
+  if (!sequence) {
+    sequence = applyInsertDefaults("document_sequences", {
+      business_id: businessId,
+      document_type: documentType,
+      fiscal_year: fiscalYear,
+      next_serial: 1,
+    });
+    insertRow("document_sequences", sequence);
+  }
+
+  const reserved = Number(sequence.next_serial || 1);
+  updateRow("document_sequences", {
+    ...sequence,
+    next_serial: reserved + 1,
+    updated_at: nowIso(),
+  });
+
+  const business = readFilteredRows("businesses", [{ type: "eq", column: "id", value: businessId }])[0];
+  const counterColumn = getDocumentCounterColumn(type);
+  if (business) {
+    updateRow("businesses", {
+      ...business,
+      [counterColumn]: Math.max(Number(business[counterColumn] || 1), reserved + 1),
+      updated_at: nowIso(),
+    });
+  }
+
+  return {
+    reservedInvoiceNum: reserved,
+    fiscalYear,
+    invoicePrefix: business?.invoice_prefix || "INV",
+    invoiceNumber: formatDocumentNumber(type, business?.invoice_prefix, reserved, null),
+  };
+}
+
+function createAndIssueDocument(payload) {
+  try {
+    ensureInitialized();
+    const user = assertSession();
+    const { invoice, items = [], paymentAmount = 0 } = payload || {};
+    if (!invoice?.business_id) {
+      throw new Error("business_id is required");
+    }
+    assertBusinessAccess(user.id, invoice.business_id);
+
+    return createResponse(
+      withTransaction(() => {
+        const invoiceId = invoice.id || crypto.randomUUID();
+        const desiredStatus = invoice.status || "draft";
+        const paidAmount = Number(paymentAmount || invoice.paid_amount || 0);
+        const reserved = reserveDocumentNumber(
+          invoice.business_id,
+          invoice.type,
+          invoice.fiscal_year
+        );
+
+        let finalStatus = desiredStatus;
+        if (desiredStatus === "issued" && paidAmount > 0) {
+          const total = Number(invoice.total_amount || 0);
+          finalStatus = paidAmount >= total ? "paid" : "partially_paid";
+        }
+
+        const invoiceRow = applyInsertDefaults("invoices", {
+          ...invoice,
+          id: invoiceId,
+          invoice_number: reserved.invoiceNumber,
+          fiscal_year: invoice.fiscal_year || reserved.fiscalYear,
+          document_serial: reserved.reservedInvoiceNum,
+          status: "draft",
+          paid_amount: paidAmount,
+          balance_due: Math.max(0, Number(invoice.total_amount || 0) - paidAmount),
+        });
+        insertRow("invoices", invoiceRow);
+
+        for (const [idx, item] of items.entries()) {
+          insertRow(
+            "invoice_items",
+            applyInsertDefaults("invoice_items", {
+              ...item,
+              invoice_id: invoiceId,
+              sort_order: idx,
+            })
+          );
+        }
+
+        if (finalStatus !== "draft") {
+          const issued = { ...invoiceRow, status: finalStatus, updated_at: nowIso() };
+          updateRow("invoices", issued);
+          handleInvoiceMutation(invoiceRow, issued);
+          Object.assign(invoiceRow, issued);
+        }
+
+        appendInvoiceEvent({
+          businessId: invoice.business_id,
+          invoiceId,
+          userId: user.id,
+          action: finalStatus === "draft" ? "draft_created" : "issued",
+          details: {
+            invoice_number: invoiceRow.invoice_number,
+            type: invoiceRow.type,
+            status: finalStatus,
+          },
+        });
+
+        if (paidAmount > 0 && desiredStatus !== "draft") {
+          const partyId = invoice.customer_id || invoice.vendor_id || null;
+          insertRow(
+            "payments",
+            applyInsertDefaults("payments", {
+              business_id: invoice.business_id,
+              invoice_id: invoiceId,
+              party_id: partyId,
+              amount: paidAmount,
+              method: "cash",
+              status: "completed",
+              payment_date_ad: invoice.issued_date_ad || nowIso().slice(0, 10),
+              payment_date_bs: invoice.issued_date_bs || "",
+              notes: `Payment received on invoice ${invoiceRow.invoice_number}`,
+            })
+          );
+          appendInvoiceEvent({
+            businessId: invoice.business_id,
+            invoiceId,
+            userId: user.id,
+            action: "payment_recorded",
+            details: { amount: paidAmount, method: "cash", status: "completed" },
+          });
+        }
+
+        return { id: invoiceId, invoice_number: invoiceRow.invoice_number, status: finalStatus };
+      })
+    );
+  } catch (error) {
+    logger.error("documents_create_failed", { message: error.message });
+    return createResponse(null, error);
+  }
+}
+
+function adjustStockAtomic(payload) {
+  try {
+    ensureInitialized();
+    const user = assertSession();
+    const { business_id, item_id, quantity, direction, reason } = payload || {};
+    assertBusinessAccess(user.id, business_id);
+    if (!item_id || !quantity || !direction) {
+      throw new Error("item_id, quantity, and direction are required");
+    }
+
+    return createResponse(
+      withTransaction(() => {
+        const item = readFilteredRows("items", [
+          { type: "eq", column: "id", value: item_id },
+          { type: "eq", column: "business_id", value: business_id },
+        ])[0];
+        if (!item) {
+          throw new Error("Item not found");
+        }
+        const oldStock = Number(item.current_stock || 0);
+        const qty = Number(quantity);
+        const newStock = direction === "in" ? oldStock + qty : oldStock - qty;
+        if (newStock < 0) {
+          throw new Error("Stock cannot go below zero");
+        }
+        updateRow("items", {
+          ...item,
+          current_stock: newStock,
+          updated_at: nowIso(),
+        });
+        insertRow(
+          "stock_movements",
+          applyInsertDefaults("stock_movements", {
+            business_id,
+            item_id,
+            quantity: qty,
+            direction,
+            reason: reason || "manual",
+            stock_before: oldStock,
+            stock_after: newStock,
+          })
+        );
+        return { item_id, stock_before: oldStock, stock_after: newStock };
+      })
+    );
+  } catch (error) {
+    logger.error("stock_adjust_failed", { message: error.message });
     return createResponse(null, error);
   }
 }
 
 module.exports = {
   initializeDatabase,
+  initializeDatabaseForTests,
+  SCHEMA_VERSION,
   query,
+  documents: {
+    createAndIssue: createAndIssueDocument,
+  },
+  stock: {
+    adjust: adjustStockAtomic,
+  },
   auth: {
     getSession,
     signUp,
@@ -1209,5 +1677,10 @@ module.exports = {
   backup: {
     createBackup,
     restoreBackup,
+  },
+  __test: {
+    verifyPassword,
+    hashPassword,
+    isAllowedExternalUrl: require("../security/open-external.cjs").isAllowedExternalUrl,
   },
 };

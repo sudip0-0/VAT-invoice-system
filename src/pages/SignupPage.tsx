@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { signUpSchema } from '@/lib/schemas/auth';
 
 export default function SignupPage() {
   const { signUp, user, loading: authLoading } = useAuth();
@@ -17,13 +18,14 @@ export default function SignupPage() {
     e.preventDefault();
     setError('');
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    const parsed = signUpSchema.safeParse({ email, password, name });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || 'Invalid signup details');
       return;
     }
 
     setLoading(true);
-    const { error } = await signUp(email, password, name);
+    const { error } = await signUp(parsed.data.email, parsed.data.password, parsed.data.name);
     setLoading(false);
 
     if (error) {
@@ -35,7 +37,11 @@ export default function SignupPage() {
   };
 
   if (authLoading) {
-    return <div className="flex min-h-screen items-center justify-center bg-background"><div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    );
   }
 
   if (user) {
@@ -52,12 +58,18 @@ export default function SignupPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
+          {error && (
+            <div role="alert" aria-live="polite" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {error}
+            </div>
+          )}
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-foreground">Full Name</label>
+            <label htmlFor="signup-name" className="mb-1.5 block text-xs font-medium text-foreground">Full Name</label>
             <input
+              id="signup-name"
               type="text"
+              autoComplete="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -67,9 +79,11 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-foreground">Email</label>
+            <label htmlFor="signup-email" className="mb-1.5 block text-xs font-medium text-foreground">Email</label>
             <input
+              id="signup-email"
               type="email"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -79,18 +93,25 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-foreground">Password</label>
+            <label htmlFor="signup-password" className="mb-1.5 block text-xs font-medium text-foreground">Password</label>
             <div className="relative">
               <input
+                id="signup-password"
                 type={showPw ? 'text' : 'password'}
+                autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                minLength={6}
+                minLength={8}
                 className="w-full rounded-md border border-input bg-card px-3 py-2 pr-9 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-                placeholder="Min 6 characters"
+                placeholder="Min 8 characters"
               />
-              <button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
+              <button
+                type="button"
+                aria-label={showPw ? 'Hide password' : 'Show password'}
+                onClick={() => setShowPw(!showPw)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+              >
                 {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
@@ -99,9 +120,9 @@ export default function SignupPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-md bg-primary py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="w-full rounded-md bg-primary py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
           >
-            {loading ? 'Creating account...' : 'Create Local Account'}
+            {loading ? 'Creating account...' : 'Create Account'}
           </button>
         </form>
 

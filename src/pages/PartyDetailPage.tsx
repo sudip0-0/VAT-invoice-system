@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import PartyDialog, { type PartyFormData } from '@/components/parties/PartyDialog';
 import StandalonePaymentDialog from '@/components/payments/StandalonePaymentDialog';
 import { useToast } from '@/hooks/use-toast';
+import PageBreadcrumbs from '@/components/shared/PageBreadcrumbs';
 
 function getDefaultDateRange() {
   const now = nepalNow();
@@ -90,10 +91,22 @@ export default function PartyDetailPage() {
 
   return (
     <div className="space-y-5 animate-fade-in">
+      <PageBreadcrumbs
+        items={[
+          { label: 'Home', href: '/' },
+          { label: 'Parties', href: '/parties' },
+          { label: party.name },
+        ]}
+      />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/parties')} className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+          <button
+            type="button"
+            aria-label="Back to parties"
+            onClick={() => navigate('/parties')}
+            className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
             <ArrowLeft className="h-4 w-4" />
           </button>
           <div>

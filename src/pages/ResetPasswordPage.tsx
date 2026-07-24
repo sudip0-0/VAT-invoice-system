@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { localDb } from '@/integrations/local-db/client';
+import { updatePasswordSchema } from '@/lib/schemas/auth';
 
 export default function ResetPasswordPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -14,7 +16,7 @@ export default function ResetPasswordPage() {
 
   useEffect(() => {
     localDb.auth.getSession().then(({ data }) => {
-      if (data.session || user) {
+      if (data?.session || user) {
         setReady(true);
       } else {
         navigate('/login');
@@ -24,15 +26,18 @@ export default function ResetPasswordPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    const parsed = updatePasswordSchema.safeParse({ currentPassword, password });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || 'Invalid password');
       return;
     }
 
     setError('');
     setLoading(true);
-    const { error } = await localDb.auth.updateUser({ password });
+    const { error } = await localDb.auth.updateUser({
+      currentPassword: parsed.data.currentPassword,
+      password: parsed.data.password,
+    });
     setLoading(false);
 
     if (error) {
@@ -70,18 +75,37 @@ export default function ResetPasswordPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
+          {error && (
+            <div role="alert" aria-live="polite" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {error}
+            </div>
+          )}
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-foreground">New Password</label>
+            <label htmlFor="reset-current-password" className="mb-1.5 block text-xs font-medium text-foreground">Current Password</label>
             <input
+              id="reset-current-password"
               type="password"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              required
+              className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="reset-new-password" className="mb-1.5 block text-xs font-medium text-foreground">New Password</label>
+            <input
+              id="reset-new-password"
+              type="password"
+              autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength={6}
+              minLength={8}
               className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-              placeholder="Min 6 characters"
+              placeholder="Min 8 characters"
             />
           </div>
 

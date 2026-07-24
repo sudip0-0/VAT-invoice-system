@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, ShoppingCart, Package, Users,
   BarChart3, Settings, ChevronLeft, ChevronRight, Receipt,
-  Building2, Bell, Search, Menu, LogOut, ArrowLeftRight, Wallet, FilePlus2
+  Building2, Search, Menu, LogOut, ArrowLeftRight, Wallet, FilePlus2
 } from 'lucide-react';
 import { todayBS, formatBS } from '@/lib/bs-calendar';
 import { useAuth } from '@/contexts/AuthContext';
@@ -152,15 +152,24 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           {!collapsed && <span>Sign Out</span>}
         </button>
 
-        <button onClick={() => setCollapsed(!collapsed)}
-          className="hidden lg:flex h-10 items-center justify-center border-t border-sidebar-border text-sidebar-muted hover:text-sidebar-accent-foreground transition-colors">
+        <button
+          type="button"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={() => setCollapsed(!collapsed)}
+          className="hidden lg:flex h-10 items-center justify-center border-t border-sidebar-border text-sidebar-muted hover:text-sidebar-accent-foreground transition-colors"
+        >
           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
         </button>
       </aside>
 
       <div className="flex flex-1 flex-col overflow-hidden">
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
-          <button onClick={() => setMobileOpen(true)} className="lg:hidden rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+          <button
+            type="button"
+            aria-label="Open navigation menu"
+            onClick={() => setMobileOpen(true)}
+            className="lg:hidden rounded-md p-1.5 text-muted-foreground hover:bg-muted"
+          >
             <Menu className="h-5 w-5" />
           </button>
 
@@ -174,8 +183,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             <span className="hidden md:inline text-xs text-muted-foreground">{formatBS(today)}</span>
             <div className="relative hidden sm:block">
               <div className="flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">
-              <Search className="h-3.5 w-3.5" />
+              <Search className="h-3.5 w-3.5" aria-hidden="true" />
+                <label htmlFor="global-search" className="sr-only">Search invoices, parties, items</label>
                 <input
+                  id="global-search"
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value);
@@ -211,11 +222,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 </div>
               )}
             </div>
-            <button className="relative rounded-md p-1.5 text-muted-foreground hover:bg-muted">
-              <Bell className="h-4 w-4" />
-              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent" />
-            </button>
-            <div className="h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold">
+            <div
+              className="h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold"
+              aria-label={`Signed in as ${user?.user_metadata?.name || user?.email || 'user'}`}
+            >
               {user?.user_metadata?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || '?'}
             </div>
           </div>
