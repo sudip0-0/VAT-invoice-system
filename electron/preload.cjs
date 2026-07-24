@@ -15,11 +15,14 @@ contextBridge.exposeInMainWorld("desktopApi", {
     signOut: () => ipcRenderer.invoke("desktop:auth:sign-out"),
     updateUser: (payload) => ipcRenderer.invoke("desktop:auth:update-user", payload),
     resetPasswordForEmail: (payload) => ipcRenderer.invoke("desktop:auth:reset-password", payload),
+    createMember: (payload) => ipcRenderer.invoke("desktop:auth:create-member", payload),
+    listMembers: (payload) => ipcRenderer.invoke("desktop:auth:list-members", payload),
+    removeMember: (payload) => ipcRenderer.invoke("desktop:auth:remove-member", payload),
   },
   system: {
     openExternal: (url) => ipcRenderer.invoke("desktop:system:open-external", url),
     openLogs: () => ipcRenderer.invoke("desktop:system:open-logs"),
-    createBackup: () => ipcRenderer.invoke("desktop:system:create-backup"),
-    restoreBackup: () => ipcRenderer.invoke("desktop:system:restore-backup"),
+    createBackup: (payload) => ipcRenderer.invoke("desktop:system:create-backup", payload || {}),
+    restoreBackup: (payload) => ipcRenderer.invoke("desktop:system:restore-backup", payload || {}),
   },
 });

@@ -19,6 +19,7 @@ import { calculateVATLine, reconcileLineTotals, STATUTORY_VAT_RATE } from '@/lib
 import { formatBSShort, getVATPeriod, todayBS } from '@/lib/bs-calendar';
 import { nepalTodayISO } from '@/lib/nepal-date';
 import { updatePasswordSchema } from '@/lib/schemas/auth';
+import { useTeamMembers } from '@/hooks/useTeamMembers';
 
 const BUSINESS_TYPES = ['kirana', 'wholesale', 'retail', 'restaurant', 'pharmacy', 'service', 'manufacturer', 'other'];
 const TAX_TYPES = [
@@ -40,6 +41,7 @@ export default function SettingsPage() {
           <TabsTrigger value="tax" className="text-xs px-3">Tax Rates</TabsTrigger>
           <TabsTrigger value="cbms" className="text-xs px-3">CBMS</TabsTrigger>
           <TabsTrigger value="user" className="text-xs px-3">My Profile</TabsTrigger>
+          <TabsTrigger value="team" className="text-xs px-3">Team</TabsTrigger>
           <TabsTrigger value="data" className="text-xs px-3">Data</TabsTrigger>
         </TabsList>
 
@@ -57,6 +59,9 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="user" className="mt-4">
           <UserProfileTab />
+        </TabsContent>
+        <TabsContent value="team" className="mt-4">
+          <TeamTab />
         </TabsContent>
         <TabsContent value="data" className="mt-4">
           <DesktopDataTab />
@@ -505,12 +510,110 @@ function UserProfileTab() {
   );
 }
 
+function TeamTab() {
+  const { toast } = useToast();
+  const { data: members = [], isLoading, createMember, removeMember } = useTeamMembers();
+  const [form, setForm] = useState({ email: '', password: '', name: '', role: 'staff' });
+
+  const handleAdd = async () => {
+    if (!window.desktopApi?.auth.createMember) {
+      toast({ title: 'Desktop runtime required', description: 'Team membership is only available in the Electron app.', variant: 'destructive' });
+      return;
+    }
+    try {
+      await createMember.mutateAsync(form);
+      setForm({ email: '', password: '', name: '', role: 'staff' });
+      toast({ title: 'Member added' });
+    } catch (error) {
+      toast({ title: 'Could not add member', description: error instanceof Error ? error.message : 'Try again', variant: 'destructive' });
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Team Members</h3>
+          <p className="text-xs text-muted-foreground">Local desktop accounts for this business. Roles are labels only (membership AuthZ).</p>
+        </div>
+        {isLoading ? (
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        ) : members.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No members found.</p>
+        ) : (
+          <div className="space-y-2">
+            {members.map((member) => (
+              <div key={member.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-xs">
+                <div>
+                  <p className="font-medium text-foreground">{member.name || member.email}</p>
+                  <p className="text-muted-foreground">{member.email} · {member.role}</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive h-7 text-xs"
+                  disabled={removeMember.isPending}
+                  onClick={async () => {
+                    try {
+                      await removeMember.mutateAsync(member.id);
+                      toast({ title: 'Member removed' });
+                    } catch (error) {
+                      toast({ title: 'Could not remove member', description: error instanceof Error ? error.message : 'Try again', variant: 'destructive' });
+                    }
+                  }}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <h3 className="text-sm font-semibold text-foreground">Add Member</h3>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div>
+            <Label className="text-xs">Name</Label>
+            <Input className="h-8 text-xs" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+          </div>
+          <div>
+            <Label className="text-xs">Role label</Label>
+            <Select value={form.role} onValueChange={(value) => setForm((f) => ({ ...f, role: value }))}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="owner">Owner</SelectItem>
+                <SelectItem value="manager">Manager</SelectItem>
+                <SelectItem value="accountant">Accountant</SelectItem>
+                <SelectItem value="staff">Staff</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Email</Label>
+            <Input className="h-8 text-xs" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+          </div>
+          <div>
+            <Label className="text-xs">Password (min 8)</Label>
+            <Input className="h-8 text-xs" type="password" value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
+          </div>
+        </div>
+        <Button size="sm" className="text-xs" onClick={handleAdd} disabled={createMember.isPending || !form.email || form.password.length < 8}>
+          Create Member
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function DesktopDataTab() {
   const { toast } = useToast();
   const { business } = useBusiness();
   const qc = useQueryClient();
   const { createInvoice } = useInvoices();
   const [busyAction, setBusyAction] = useState<'backup' | 'restore' | 'verify' | 'demo' | null>(null);
+  const [passphrase, setPassphrase] = useState('');
+  const [unencryptedBackup, setUnencryptedBackup] = useState(false);
   const [auditStatus, setAuditStatus] = useState<'not_checked' | 'verified' | 'warning' | 'failed'>(
     () => (localStorage.getItem(`audit-verification-status:${business?.id || 'none'}`) as any) || 'not_checked'
   );
@@ -529,9 +632,16 @@ function DesktopDataTab() {
       toast({ title: 'Desktop runtime unavailable', description: 'Backups are only available in the Electron desktop app.', variant: 'destructive' });
       return;
     }
+    if (!unencryptedBackup && passphrase.length < 8) {
+      toast({ title: 'Passphrase required', description: 'Encrypted backups need a passphrase of at least 8 characters.', variant: 'destructive' });
+      return;
+    }
 
     setBusyAction('backup');
-    const response = await window.desktopApi.system.createBackup();
+    const response = await window.desktopApi.system.createBackup({
+      passphrase: unencryptedBackup ? undefined : passphrase,
+      unencrypted: unencryptedBackup,
+    });
     setBusyAction(null);
 
     if (response.error) {
@@ -547,7 +657,10 @@ function DesktopDataTab() {
         setLastBackupAt(timestamp);
         qc.invalidateQueries({ queryKey: ['setup-readiness', business.id] });
       }
-      toast({ title: 'Backup created', description: response.data?.path || 'Database backup saved.' });
+      toast({
+        title: unencryptedBackup ? 'Unencrypted backup created' : 'Encrypted backup created',
+        description: response.data?.path || 'Database backup saved.',
+      });
     }
   };
 
@@ -558,12 +671,14 @@ function DesktopDataTab() {
     }
 
     const confirmed = window.confirm(
-      'Restore will replace the current database. A pre-restore safety copy is created automatically. Backups include local password hashes — only restore trusted files. Continue?'
+      'Restore will replace the current database. A pre-restore safety copy is created automatically. Encrypted backups need the correct passphrase. Continue?'
     );
     if (!confirmed) return;
 
     setBusyAction('restore');
-    const response = await window.desktopApi.system.restoreBackup();
+    const response = await window.desktopApi.system.restoreBackup({
+      passphrase: passphrase || undefined,
+    });
     setBusyAction(null);
 
     if (response.error) {
@@ -918,25 +1033,43 @@ function DesktopDataTab() {
             )}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <p className="text-xs text-muted-foreground sm:col-span-2">
-            Backups are checksummed (`.sha256` sidecar) and include local account password hashes. Store them privately. Installer builds are unsigned in this channel — see TESTER_GUIDE.
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Default backups are AES-256-GCM encrypted (`.vyapar-bak`) with a passphrase-derived key, plus a `.sha256` checksum of the ciphertext. Unencrypted `.sqlite` export is advanced-only for accountant tools.
           </p>
-          <Button size="sm" className="text-xs" onClick={handleBackup} disabled={busyAction !== null}>
-            {busyAction === 'backup' ? 'Creating Backup...' : 'Create Backup'}
-          </Button>
-          <Button size="sm" variant="outline" className="text-xs" onClick={handleRestore} disabled={busyAction !== null}>
-            {busyAction === 'restore' ? 'Restoring Backup...' : 'Restore Backup'}
-          </Button>
-          <Button size="sm" variant="outline" className="text-xs" onClick={handleOpenLogs} disabled={busyAction !== null}>
-            Open Logs Folder
-          </Button>
-          <Button size="sm" variant="outline" className="text-xs" onClick={handleVerifyAuditChains} disabled={busyAction !== null}>
-            {busyAction === 'verify' ? 'Verifying...' : 'Verify Audit Chains'}
-          </Button>
-          <Button size="sm" variant="outline" className="text-xs" onClick={handleCreateDemoData} disabled={busyAction !== null}>
-            {busyAction === 'demo' ? 'Creating Demo...' : 'Create Demo Data'}
-          </Button>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div>
+              <Label className="text-xs">Backup / restore passphrase</Label>
+              <Input
+                type="password"
+                className="h-8 text-xs"
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.target.value)}
+                placeholder="Min 8 characters"
+              />
+            </div>
+            <div className="flex items-end gap-2 pb-1">
+              <Switch id="unencrypted-backup" checked={unencryptedBackup} onCheckedChange={setUnencryptedBackup} />
+              <Label htmlFor="unencrypted-backup" className="text-xs">Unencrypted advanced export</Label>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" className="text-xs" onClick={handleBackup} disabled={busyAction !== null}>
+              {busyAction === 'backup' ? 'Creating Backup...' : unencryptedBackup ? 'Create Unencrypted Backup' : 'Create Encrypted Backup'}
+            </Button>
+            <Button size="sm" variant="outline" className="text-xs" onClick={handleRestore} disabled={busyAction !== null}>
+              {busyAction === 'restore' ? 'Restoring Backup...' : 'Restore Backup'}
+            </Button>
+            <Button size="sm" variant="outline" className="text-xs" onClick={handleOpenLogs} disabled={busyAction !== null}>
+              Open Logs Folder
+            </Button>
+            <Button size="sm" variant="outline" className="text-xs" onClick={handleVerifyAuditChains} disabled={busyAction !== null}>
+              {busyAction === 'verify' ? 'Verifying...' : 'Verify Audit Chains'}
+            </Button>
+            <Button size="sm" variant="outline" className="text-xs" onClick={handleCreateDemoData} disabled={busyAction !== null}>
+              {busyAction === 'demo' ? 'Creating Demo...' : 'Create Demo Data'}
+            </Button>
+          </div>
         </div>
       </div>
     </div>

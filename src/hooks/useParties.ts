@@ -143,7 +143,10 @@ export function useParties() {
       if (error) throw error;
       return data;
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['parties', business?.id] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['parties', business?.id] });
+      queryClient.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
+    },
   });
 
   const updateParty = useMutation({
@@ -158,7 +161,10 @@ export function useParties() {
       if (error) throw error;
       return data;
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['parties', business?.id] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['parties', business?.id] });
+      queryClient.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
+    },
   });
 
   const deleteParty = useMutation({
@@ -169,7 +175,10 @@ export function useParties() {
         .eq('id', id);
       if (error) throw error;
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['parties', business?.id] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['parties', business?.id] });
+      queryClient.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
+    },
   });
 
   return { ...query, createParty, updateParty, deleteParty };
@@ -264,6 +273,7 @@ export function usePartyList({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['party_list', business?.id] });
       queryClient.invalidateQueries({ queryKey: ['parties', business?.id] });
+      queryClient.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
     },
   });
 
@@ -282,6 +292,7 @@ export function usePartyList({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['party_list', business?.id] });
       queryClient.invalidateQueries({ queryKey: ['parties', business?.id] });
+      queryClient.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
     },
   });
 
@@ -296,6 +307,7 @@ export function usePartyList({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['party_list', business?.id] });
       queryClient.invalidateQueries({ queryKey: ['parties', business?.id] });
+      queryClient.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
     },
   });
 

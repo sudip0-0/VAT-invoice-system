@@ -14,7 +14,7 @@ This test channel ships **unsigned** NSIS builds (code signing is out of scope f
 1. Click `More info`
 2. Click `Run anyway`
 
-Backups write a `.sha256` sidecar and may include local password hashes — store them privately. Restore creates a pre-restore safety copy and verifies checksums when the sidecar is present.
+Backups default to AES-256-GCM encrypted `.vyapar-bak` files (passphrase ≥8 chars via Settings → Data), with a `.sha256` checksum of the ciphertext. Unencrypted `.sqlite` export is advanced-only. Restore verifies checksums when the sidecar is present, decrypts with the passphrase, and creates a pre-restore safety copy.
 
 ## What To Test
 1. Business setup and login flow
@@ -35,7 +35,9 @@ Backups write a `.sha256` sidecar and may include local password hashes — stor
 2. Use demo data or manually create a sale invoice, then issue and print it.
 3. Record or review the sample payment on the invoice.
 4. Open `Reports -> VAT Filing Review Pack`, export CSV, and confirm VAT return aid, books, CN/DN, and sequence sections are present.
-5. Open `Settings -> Data`, create a backup, then run `Verify Audit Chains`.
+5. Open `Settings -> Data`, enter a passphrase, create an encrypted backup, then run `Verify Audit Chains`.
+6. Optional: create a second local team member under `Settings -> Team`, sign out, and confirm they only see joined business data.
+7. Optional: create a partial CN/DN from an issued invoice (select one line), and add a Schedule 10 accountant adjustment on VAT Return.
 
 ## What To Include In Feedback
 1. Clear title

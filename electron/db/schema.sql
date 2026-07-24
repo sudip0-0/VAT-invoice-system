@@ -287,6 +287,33 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   FOREIGN KEY (invoice_id) REFERENCES invoices(id)
 );
 
+CREATE TABLE IF NOT EXISTS vat_return_adjustments (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  period_from_ad TEXT NOT NULL,
+  period_to_ad TEXT NOT NULL,
+  field_key TEXT NOT NULL,
+  amount REAL NOT NULL DEFAULT 0,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS document_templates (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  document_type TEXT NOT NULL DEFAULT 'sale',
+  payload TEXT NOT NULL,
+  schedule TEXT NOT NULL DEFAULT 'none',
+  next_run_ad TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_business_users_user_id ON business_users(user_id);
 CREATE INDEX IF NOT EXISTS idx_items_business_id ON items(business_id);
 CREATE INDEX IF NOT EXISTS idx_items_business_type_name ON items(business_id, type, name);
@@ -313,3 +340,6 @@ CREATE INDEX IF NOT EXISTS idx_expenses_business_date ON expenses(business_id, e
 CREATE INDEX IF NOT EXISTS idx_expenses_business_category ON expenses(business_id, category);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_business_id ON stock_movements(business_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_business_created ON stock_movements(business_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_vat_return_adjustments_business_period ON vat_return_adjustments(business_id, period_from_ad, period_to_ad);
+CREATE INDEX IF NOT EXISTS idx_document_templates_business_id ON document_templates(business_id);
+CREATE INDEX IF NOT EXISTS idx_document_templates_next_run ON document_templates(business_id, next_run_ad);

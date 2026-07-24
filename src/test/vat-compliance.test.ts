@@ -6,6 +6,7 @@ import {
   canIssueVATInvoice,
   getVATRateForTaxType,
   hasRequiredBuyerPan,
+  validateInvoiceIssuePreflight,
 } from "@/lib/vat-compliance";
 
 describe("VAT compliance helpers", () => {
@@ -70,5 +71,55 @@ describe("VAT compliance helpers", () => {
     expect(canDirectlyEditInvoice({ type: "sale_return", status: "draft", is_vat_invoice: true })).toBe(true);
     expect(canDirectlyEditInvoice({ type: "sale_return", status: "issued", is_vat_invoice: true })).toBe(false);
     expect(canDirectlyEditInvoice({ type: "purchase_return", status: "issued", is_vat_invoice: false })).toBe(false);
+  });
+
+  it("passes invoice issue preflight for a valid VAT sale", () => {
+    const line = calculateVATLine({ quantity: 1, rate: 1000, tax_type: "vat_13" });
+    const result = validateInvoiceIssuePreflight({
+      type: "sale",
+      status: "issued",
+      isVatInvoice: true,
+      isBusinessVatRegistered: true,
+      businessPan: "111111111",
+      buyerPan: "123456789",
+      totals: {
+        discountAmount: line.discount_amt,
+        taxableAmount: line.taxable_amount,
+        vatAmount: line.vat_amount,
+        totalAmount: line.total_amount,
+      },
+      lines: [{ name: "Taxable item", item_id: "item-1", quantity: 1, rate: 1000, tax_type: "vat_13", ...line }],
+      stockByItemId: { "item-1": { current_stock: 2, type: "product", name: "Taxable item" } },
+      fiscalYear: "2082/83",
+      documentSerial: 1,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("blocks invoice issue preflight when required data or stock is missing", () => {
+    const line = calculateVATLine({ quantity: 5, rate: 1000, tax_type: "vat_13" });
+    const result = validateInvoiceIssuePreflight({
+      type: "sale",
+      status: "issued",
+      isVatInvoice: true,
+      isBusinessVatRegistered: true,
+      businessPan: "",
+      buyerPan: "",
+      totals: {
+        discountAmount: line.discount_amt,
+        taxableAmount: line.taxable_amount,
+        vatAmount: line.vat_amount,
+        totalAmount: line.total_amount,
+      },
+      lines: [{ name: "Taxable item", item_id: "item-1", quantity: 5, rate: 1000, tax_type: "vat_13", ...line }],
+      stockByItemId: { "item-1": { current_stock: 2, type: "product", name: "Taxable item" } },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Seller PAN/VAT number is required before issuing VAT invoices.");
+    expect(result.errors).toContain("Buyer PAN/VAT number is required to issue VAT sales invoices.");
+    expect(result.errors).toContain("Taxable item: stock is insufficient for this issued document.");
   });
 });

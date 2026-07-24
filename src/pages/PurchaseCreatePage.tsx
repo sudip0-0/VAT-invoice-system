@@ -45,6 +45,7 @@ export default function PurchaseCreatePage() {
   const [referenceNumber, setReferenceNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<LineItem[]>([newLine()]);
+  const [skuCode, setSkuCode] = useState('');
 
   const vendors = useMemo(() => {
     return parties.filter((p) => p.type === 'vendor' || p.type === 'both');
@@ -73,6 +74,46 @@ export default function PurchaseCreatePage() {
 
   const addLine = () => setLines((prev) => [...prev, newLine()]);
   const removeLine = (key: string) => setLines((prev) => prev.length > 1 ? prev.filter((l) => l.key !== key) : prev);
+
+  const addOrIncrementByCode = useCallback((rawCode: string) => {
+    const code = rawCode.trim();
+    if (!code) return;
+    const item = inventoryItems.find((row) => (row.code || '').toLowerCase() === code.toLowerCase());
+    if (!item) {
+      toast({ title: 'Unknown SKU / barcode', description: `No item with code "${code}"`, variant: 'destructive' });
+      setSkuCode('');
+      return;
+    }
+    setLines((prev) => {
+      const existing = prev.find((line) => line.item_id === item.id);
+      if (existing) {
+        return prev.map((line) =>
+          line.key === existing.key
+            ? calcLine({ ...line, quantity: Number(line.quantity || 0) + 1 })
+            : line
+        );
+      }
+      const blank = prev.find((line) => !line.item_id && !line.name.trim());
+      const nextLine = calcLine({
+        ...(blank || newLine()),
+        item_id: item.id,
+        hsn_code: item.hsn_code || null,
+        name: item.name,
+        unit: item.unit,
+        quantity: 1,
+        rate: item.purchase_price ?? item.sale_price,
+        tax_type: isVat ? 'vat_13' : 'non_taxable',
+        vat_rate: isVat ? STATUTORY_VAT_RATE : 0,
+        is_custom: false,
+      });
+      if (blank) {
+        return prev.map((line) => (line.key === blank.key ? nextLine : line));
+      }
+      return [...prev, nextLine];
+    });
+    setSkuCode('');
+    toast({ title: `Added ${item.name}` });
+  }, [inventoryItems, isVat, toast]);
 
   const totals = useMemo(() => {
     const subTotal = roundMoney(lines.reduce((s, l) => s + l.quantity * l.rate, 0));
@@ -221,6 +262,27 @@ export default function PurchaseCreatePage() {
 
       {/* Line items */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <div className="flex flex-wrap items-end gap-2 border-b border-border px-3 py-2">
+          <div className="flex-1 min-w-[180px]">
+            <Label className="text-xs">SKU / Barcode</Label>
+            <Input
+              value={skuCode}
+              onChange={(e) => setSkuCode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addOrIncrementByCode(skuCode);
+                }
+              }}
+              className="h-8 text-xs"
+              placeholder="Scan or type item code, then Enter"
+              autoComplete="off"
+            />
+          </div>
+          <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => addOrIncrementByCode(skuCode)}>
+            Add by Code
+          </Button>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>

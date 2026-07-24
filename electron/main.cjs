@@ -62,6 +62,9 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:auth:reset-password", async (_event, payload) =>
     auth.resetPasswordForEmail(payload)
   );
+  ipcMain.handle("desktop:auth:create-member", async (_event, payload) => auth.createMember(payload));
+  ipcMain.handle("desktop:auth:list-members", async (_event, payload) => auth.listMembers(payload));
+  ipcMain.handle("desktop:auth:remove-member", async (_event, payload) => auth.removeMember(payload));
   ipcMain.handle("desktop:system:open-external", async (_event, url) => {
     if (!isAllowedExternalUrl(url)) {
       logger.warn("open_external_denied", { url });
@@ -78,34 +81,54 @@ function registerIpcHandlers() {
     await shell.openPath(dir);
     return { ok: true, path: dir };
   });
-  ipcMain.handle("desktop:system:create-backup", async () => {
+  ipcMain.handle("desktop:system:create-backup", async (_event, payload = {}) => {
+    const encrypted = payload?.unencrypted !== true;
     const result = await dialog.showSaveDialog({
-      title: "Create Backup",
-      defaultPath: "vyapar-nepal-backup.sqlite",
-      filters: [{ name: "SQLite Database", extensions: ["sqlite"] }],
+      title: encrypted ? "Create Encrypted Backup" : "Create Unencrypted Backup",
+      defaultPath: encrypted ? "vyapar-nepal-backup.vyapar-bak" : "vyapar-nepal-backup.sqlite",
+      filters: encrypted
+        ? [{ name: "Encrypted Vyapar Backup", extensions: ["vyapar-bak"] }]
+        : [{ name: "SQLite Database", extensions: ["sqlite"] }],
     });
 
     if (result.canceled || !result.filePath) {
       return { data: { canceled: true }, error: null };
     }
 
-    const response = backup.createBackup(result.filePath);
+    const response = backup.createBackup(result.filePath, {
+      passphrase: payload?.passphrase,
+      unencrypted: payload?.unencrypted === true,
+    });
     return response.error
       ? response
-      : { data: { canceled: false, path: result.filePath, checksum: response.data?.checksum }, error: null };
+      : {
+          data: {
+            canceled: false,
+            path: result.filePath,
+            checksum: response.data?.checksum,
+            encrypted: response.data?.encrypted,
+          },
+          error: null,
+        };
   });
-  ipcMain.handle("desktop:system:restore-backup", async () => {
+  ipcMain.handle("desktop:system:restore-backup", async (_event, payload = {}) => {
     const result = await dialog.showOpenDialog({
       title: "Restore Backup",
       properties: ["openFile"],
-      filters: [{ name: "SQLite Database", extensions: ["sqlite"] }],
+      filters: [
+        { name: "Vyapar Backups", extensions: ["vyapar-bak", "sqlite"] },
+        { name: "Encrypted Backup", extensions: ["vyapar-bak"] },
+        { name: "SQLite Database", extensions: ["sqlite"] },
+      ],
     });
 
     if (result.canceled || result.filePaths.length === 0) {
       return { data: { canceled: true }, error: null };
     }
 
-    const response = backup.restoreBackup(result.filePaths[0]);
+    const response = backup.restoreBackup(result.filePaths[0], {
+      passphrase: payload?.passphrase,
+    });
     return response.error
       ? response
       : {

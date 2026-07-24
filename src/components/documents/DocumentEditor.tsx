@@ -11,6 +11,7 @@ import { useInvoices } from '@/hooks/useInvoices';
 import { useParties } from '@/hooks/useParties';
 import { useItems } from '@/hooks/useItems';
 import { useBusiness } from '@/contexts/BusinessContext';
+import { useDocumentTemplates } from '@/hooks/useDocumentTemplates';
 import { formatNPR } from '@/lib/nepal-format';
 import { type BSDate, adToBS, bsToAD, formatBSShort, todayBS, getVATPeriod } from '@/lib/bs-calendar';
 import { nepalTodayISO } from '@/lib/nepal-date';
@@ -43,6 +44,7 @@ export default function DocumentEditor({ documentType = 'sale' }: { documentType
   const { createInvoice } = useInvoices();
   const { data: parties = [] } = useParties();
   const { items: inventoryItems } = useItems();
+  const { saveTemplate } = useDocumentTemplates();
 
   const todayBs = todayBS();
   const todayAd = nepalTodayISO();
@@ -58,6 +60,9 @@ export default function DocumentEditor({ documentType = 'sale' }: { documentType
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<LineItem[]>([newLine()]);
   const [receivedAmount, setReceivedAmount] = useState<number>(0);
+  const [skuCode, setSkuCode] = useState('');
+  const [templateName, setTemplateName] = useState('');
+  const [templateSchedule, setTemplateSchedule] = useState<'none' | 'monthly'>('none');
 
   const filteredParties = useMemo(() => {
     return parties.filter((p) => p.type === 'customer' || p.type === 'both');
@@ -80,12 +85,53 @@ export default function DocumentEditor({ documentType = 'sale' }: { documentType
       rate: item.sale_price,
       tax_type: isVat ? 'vat_13' : 'non_taxable',
       vat_rate: isVat ? STATUTORY_VAT_RATE : 0,
-      is_custom: false,
     });
   }, [inventoryItems, isVat, updateLine]);
 
   const addLine = () => setLines((prev) => [...prev, newLine()]);
-  const removeLine = (key: string) => setLines((prev) => prev.length > 1 ? prev.filter((l) => l.key !== key) : prev);
+
+  const addOrIncrementByCode = useCallback((rawCode: string) => {
+    const code = rawCode.trim();
+    if (!code) return;
+    const item = inventoryItems.find((row) => (row.code || '').toLowerCase() === code.toLowerCase());
+    if (!item) {
+      toast({ title: 'Unknown SKU / barcode', description: `No item with code "${code}"`, variant: 'destructive' });
+      setSkuCode('');
+      return;
+    }
+    setLines((prev) => {
+      const existing = prev.find((line) => line.item_id === item.id);
+      if (existing) {
+        return prev.map((line) =>
+          line.key === existing.key
+            ? calcLine({ ...line, quantity: Number(line.quantity || 0) + 1 })
+            : line
+        );
+      }
+      const blank = prev.find((line) => !line.item_id && !line.name.trim());
+      const nextLine = calcLine({
+        ...(blank || newLine()),
+        item_id: item.id,
+        hsn_code: item.hsn_code || null,
+        name: item.name,
+        unit: item.unit,
+        quantity: 1,
+        rate: item.sale_price,
+        tax_type: isVat ? 'vat_13' : 'non_taxable',
+        vat_rate: isVat ? STATUTORY_VAT_RATE : 0,
+      });
+      if (blank) {
+        return prev.map((line) => (line.key === blank.key ? nextLine : line));
+      }
+      return [...prev, nextLine];
+    });
+    setSkuCode('');
+    toast({ title: `Added ${item.name}` });
+  }, [inventoryItems, isVat, toast]);
+
+  const removeLine = (key: string) => {
+    setLines((prev) => (prev.length <= 1 ? prev : prev.filter((line) => line.key !== key)));
+  };
 
   const totals = useMemo(() => {
     const subTotal = roundMoney(lines.reduce((s, l) => s + l.quantity * l.rate, 0));
@@ -263,6 +309,27 @@ export default function DocumentEditor({ documentType = 'sale' }: { documentType
 
       {/* Line items */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <div className="flex flex-wrap items-end gap-2 border-b border-border px-3 py-2">
+          <div className="flex-1 min-w-[180px]">
+            <Label className="text-xs">SKU / Barcode</Label>
+            <Input
+              value={skuCode}
+              onChange={(e) => setSkuCode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addOrIncrementByCode(skuCode);
+                }
+              }}
+              className="h-8 text-xs"
+              placeholder="Scan or type item code, then Enter"
+              autoComplete="off"
+            />
+          </div>
+          <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => addOrIncrementByCode(skuCode)}>
+            Add by Code
+          </Button>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
@@ -423,6 +490,61 @@ export default function DocumentEditor({ documentType = 'sale' }: { documentType
       </div>
 
       {/* Actions */}
+      <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+        <div className="grid gap-2 sm:grid-cols-3">
+          <div className="sm:col-span-2">
+            <Label className="text-xs">Save as template name</Label>
+            <Input className="h-8 text-xs" value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="Monthly kirana order" />
+          </div>
+          <div>
+            <Label className="text-xs">Schedule</Label>
+            <Select value={templateSchedule} onValueChange={(value) => setTemplateSchedule(value as 'none' | 'monthly')}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Manual only</SelectItem>
+                <SelectItem value="monthly">Monthly draft reminder</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="text-xs"
+          disabled={!templateName.trim() || saveTemplate.isPending}
+          onClick={async () => {
+            try {
+              await saveTemplate.mutateAsync({
+                name: templateName.trim(),
+                document_type: 'sale',
+                schedule: templateSchedule,
+                payload: {
+                  party_id: partyId || null,
+                  is_vat_invoice: isVat,
+                  notes,
+                  lines: lines.filter((line) => line.name.trim()).map((line) => ({
+                    item_id: line.item_id,
+                    name: line.name,
+                    unit: line.unit,
+                    hsn_code: line.hsn_code,
+                    quantity: line.quantity,
+                    rate: line.rate,
+                    discount_pct: line.discount_pct,
+                    tax_type: line.tax_type,
+                    vat_rate: line.vat_rate,
+                  })),
+                },
+              });
+              setTemplateName('');
+              toast({ title: 'Template saved' });
+            } catch (error) {
+              toast({ title: 'Could not save template', description: error instanceof Error ? error.message : 'Try again', variant: 'destructive' });
+            }
+          }}
+        >
+          Save as Template
+        </Button>
+      </div>
       <div className="flex gap-2 justify-end pb-4">
         <Button variant="outline" size="sm" onClick={() => navigate('/invoices')}>Cancel</Button>
         <Button variant="secondary" size="sm" onClick={() => handleSave('draft')} disabled={createInvoice.isPending}>

@@ -27,6 +27,44 @@ export interface EditableInvoiceLike {
   is_vat_invoice: boolean;
 }
 
+export interface InvoiceIssuePreflightLine {
+  name?: string | null;
+  item_id?: string | null;
+  quantity?: number | null;
+  rate?: number | null;
+  tax_type?: LineTaxType | string | null;
+  vat_rate?: number | null;
+  discount_amt?: number | null;
+  taxable_amount?: number | null;
+  vat_amount?: number | null;
+  total_amount?: number | null;
+}
+
+export interface InvoiceIssuePreflightInput {
+  type?: string | null;
+  status?: string | null;
+  isVatInvoice: boolean;
+  isBusinessVatRegistered: boolean;
+  businessPan?: string | null;
+  buyerPan?: string | null;
+  totals: {
+    discountAmount: number;
+    taxableAmount: number;
+    vatAmount: number;
+    totalAmount: number;
+  };
+  lines: InvoiceIssuePreflightLine[];
+  stockByItemId?: Record<string, { current_stock: number; type?: string | null; name?: string | null }>;
+  fiscalYear?: string | null;
+  documentSerial?: number | null;
+}
+
+export interface InvoiceIssuePreflightResult {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
 export function roundMoney(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
@@ -113,4 +151,80 @@ export function canDirectlyEditInvoice(invoice: EditableInvoiceLike): boolean {
   if ((invoice.type === "sale_return" || invoice.type === "purchase_return") && invoice.status !== "draft") return false;
   if (invoice.is_vat_invoice && invoice.status !== "draft") return false;
   return true;
+}
+
+export function validateInvoiceIssuePreflight(input: InvoiceIssuePreflightInput): InvoiceIssuePreflightResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const status = input.status || "draft";
+  const type = input.type || "sale";
+
+  if (status === "draft") {
+    return { ok: true, errors, warnings };
+  }
+
+  if (!canIssueVATInvoice(input.isVatInvoice, input.isBusinessVatRegistered)) {
+    errors.push("VAT invoices require a VAT-registered business.");
+  }
+
+  if (input.isVatInvoice && input.isBusinessVatRegistered && !input.businessPan?.trim()) {
+    errors.push("Seller PAN/VAT number is required before issuing VAT invoices.");
+  }
+
+  if (!hasRequiredBuyerPan(type, status, input.isVatInvoice, input.buyerPan)) {
+    errors.push("Buyer PAN/VAT number is required to issue VAT sales invoices.");
+  }
+
+  const validLines = input.lines.filter((line) => line.name?.trim());
+  if (validLines.length === 0) {
+    errors.push("Add at least one item before issuing.");
+  }
+
+  for (const [index, line] of validLines.entries()) {
+    const label = line.name?.trim() || `Line ${index + 1}`;
+    const quantity = Number(line.quantity || 0);
+    const rate = Number(line.rate || 0);
+    const taxType = line.tax_type || (Number(line.vat_rate || 0) > 0 ? "vat_13" : "non_taxable");
+
+    if (quantity <= 0) {
+      errors.push(`${label}: quantity must be greater than zero.`);
+    }
+    if (rate < 0) {
+      errors.push(`${label}: rate cannot be negative.`);
+    }
+    if (!["vat_13", "zero_rated", "exempt", "non_taxable"].includes(String(taxType))) {
+      errors.push(`${label}: select a valid tax classification.`);
+    }
+
+    const stock = line.item_id ? input.stockByItemId?.[line.item_id] : null;
+    if (type === "sale" && stock?.type === "product" && quantity > Number(stock.current_stock || 0)) {
+      errors.push(`${stock.name || label}: stock is insufficient for this issued document.`);
+    }
+  }
+
+  const reconciled = reconcileLineTotals(validLines.map((line) => ({
+    discount_amt: Number(line.discount_amt || 0),
+    taxable_amount: Number(line.taxable_amount || 0),
+    vat_amount: Number(line.vat_amount || 0),
+    total_amount: Number(line.total_amount || 0),
+  })));
+
+  if (Math.abs(toPaisa(reconciled.discount_amount) - toPaisa(input.totals.discountAmount)) > 1) {
+    errors.push("Invoice discount total does not reconcile with line discounts.");
+  }
+  if (Math.abs(toPaisa(reconciled.taxable_amount) - toPaisa(input.totals.taxableAmount)) > 1) {
+    errors.push("Invoice taxable total does not reconcile with line taxable amounts.");
+  }
+  if (Math.abs(toPaisa(reconciled.vat_amount) - toPaisa(input.totals.vatAmount)) > 1) {
+    errors.push("Invoice VAT total does not reconcile with line VAT amounts.");
+  }
+  if (Math.abs(toPaisa(reconciled.total_amount) - toPaisa(input.totals.totalAmount)) > 1) {
+    errors.push("Invoice grand total does not reconcile with line totals.");
+  }
+
+  if (!input.fiscalYear || !input.documentSerial) {
+    warnings.push("Fiscal-year sequence metadata should be present after issue.");
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
 }

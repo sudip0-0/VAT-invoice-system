@@ -23,7 +23,7 @@ import {
   type CashCustomerDetails,
   emptyCashCustomerDetails,
 } from '@/lib/cash-customer';
-import { STATUTORY_VAT_RATE, calculateVATLine, canDirectlyEditInvoice, canIssueVATInvoice, getVATRateForTaxType, hasRequiredBuyerPan, reconcileLineTotals, roundMoney, type LineTaxType } from '@/lib/vat-compliance';
+import { STATUTORY_VAT_RATE, calculateVATLine, canDirectlyEditInvoice, getVATRateForTaxType, reconcileLineTotals, roundMoney, validateInvoiceIssuePreflight, type LineTaxType } from '@/lib/vat-compliance';
 
 const LINE_TAX_TYPES: Array<{ value: LineTaxType; label: string }> = [
   { value: 'vat_13', label: 'VAT 13%' },
@@ -189,19 +189,30 @@ export default function InvoiceEditPage() {
       toast({ title: 'Issued VAT invoices cannot be edited directly', variant: 'destructive' });
       return;
     }
-    if (!canIssueVATInvoice(isVat, Boolean(business?.is_vat_registered))) {
-      toast({ title: 'VAT invoices require a VAT-registered business', variant: 'destructive' });
-      return;
-    }
-
     const validLines = lines.filter((l) => l.name.trim());
     const selectedParty = parties.find((p) => p.id === partyId);
     const isSalesSide = invoiceType === 'sale' || invoiceType === 'sale_return';
     const isPurchaseSide = invoiceType === 'purchase' || invoiceType === 'purchase_return';
     const isCashCustomer = isSalesSide && partyId === CASH_CUSTOMER_ID;
     const buyerPan = isCashCustomer ? cashCustomerDetails.panNumber || null : selectedParty?.pan_number || null;
-    if (!hasRequiredBuyerPan(invoiceType, status, isVat, buyerPan)) {
-      toast({ title: 'Buyer PAN/VAT number is required to issue VAT sales invoices', variant: 'destructive' });
+    const stockByItemId = Object.fromEntries(
+      inventoryItems.map((item) => [item.id, { current_stock: Number(item.current_stock || 0), type: item.type, name: item.name }])
+    );
+    const preflight = validateInvoiceIssuePreflight({
+      type: invoiceType,
+      status,
+      isVatInvoice: isVat,
+      isBusinessVatRegistered: Boolean(business?.is_vat_registered),
+      businessPan: business?.pan_number,
+      buyerPan,
+      totals,
+      lines: validLines,
+      stockByItemId,
+      fiscalYear: invoice?.fiscal_year,
+      documentSerial: invoice?.document_serial,
+    });
+    if (!preflight.ok) {
+      toast({ title: 'Cannot issue invoice', description: preflight.errors[0], variant: 'destructive' });
       return;
     }
     const paidAmount = Number(invoice?.paid_amount || 0);

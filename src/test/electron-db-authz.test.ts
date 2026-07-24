@@ -209,4 +209,52 @@ describe("electron db authz + documents", () => {
     });
     expect(movements.data).toHaveLength(1);
   });
+
+  it("encrypts and decrypts backup payload with passphrase", () => {
+    const plain = Buffer.from("sqlite-bytes");
+    const encrypted = dbModule.__test.encryptBackupBuffer(plain, "passphrase123");
+    expect(encrypted.subarray(0, 6).toString()).toBe("VYENC1");
+    const decrypted = dbModule.__test.decryptBackupBuffer(encrypted, "passphrase123");
+    expect(decrypted.equals(plain)).toBe(true);
+    expect(() => dbModule.__test.decryptBackupBuffer(encrypted, "wrong-pass")).toThrow(/passphrase|corrupted/i);
+  });
+
+  it("creates a member without switching the current session", async () => {
+    const owner = dbModule.auth.signUp({
+      email: "owner-team@example.com",
+      password: "password123",
+      options: { data: { name: "Owner" } },
+    });
+    expect(owner.error).toBeNull();
+    const businessId = crypto.randomUUID();
+    await dbModule.query({
+      table: "businesses",
+      action: "insert",
+      filters: [],
+      payload: { id: businessId, name: "Team Biz", type: "retail" },
+    });
+    await dbModule.query({
+      table: "business_users",
+      action: "insert",
+      filters: [],
+      payload: { business_id: businessId, user_id: owner.data!.user.id, role: "owner" },
+    });
+
+    const created = dbModule.auth.createMember({
+      businessId,
+      email: "staff-team@example.com",
+      password: "password123",
+      name: "Staff",
+      role: "staff",
+    });
+    expect(created.error).toBeNull();
+    expect(created.data?.createdUser).toBe(true);
+
+    const session = dbModule.auth.getSession();
+    expect(session.data?.session?.user.email).toBe("owner-team@example.com");
+
+    const listed = dbModule.auth.listMembers({ businessId });
+    expect(listed.error).toBeNull();
+    expect(listed.data?.members.some((m: { email: string }) => m.email === "staff-team@example.com")).toBe(true);
+  });
 });

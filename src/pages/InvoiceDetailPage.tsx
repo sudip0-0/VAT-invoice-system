@@ -25,6 +25,7 @@ import { nepalTodayISO } from '@/lib/nepal-date';
 import { formatBSShort, getVATPeriod, todayBS } from '@/lib/bs-calendar';
 import { canDirectlyEditInvoice } from '@/lib/vat-compliance';
 import PageBreadcrumbs from '@/components/shared/PageBreadcrumbs';
+import { localDb } from '@/integrations/local-db/client';
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -46,6 +47,79 @@ export default function InvoiceDetailPage() {
   const [correctionOpen, setCorrectionOpen] = useState(false);
   const [correctionType, setCorrectionType] = useState<'credit' | 'debit'>('credit');
   const [correctionReason, setCorrectionReason] = useState('');
+  const [correctionCategory, setCorrectionCategory] = useState<'return' | 'rate_adjustment' | 'other'>('return');
+  const [correctionSelections, setCorrectionSelections] = useState<Array<{
+    sourceLineId?: string;
+    item_id?: string | null;
+    name: string;
+    unit?: string | null;
+    hsn_code?: string | null;
+    quantity: number;
+    rate: number;
+    discount_pct?: number;
+    tax_type?: string | null;
+    vat_rate?: number | null;
+    maxQuantity: number;
+    selected: boolean;
+  }>>([]);
+
+  const openCorrectionDialog = async () => {
+    const lines = invoice?.invoice_items || [];
+    let priorLines: Array<{ item_id?: string | null; name: string; quantity: number }> = [];
+    if (business?.id && invoice?.id) {
+      const { data: priorNotes } = await localDb
+        .from('invoices')
+        .select('invoice_items(item_id, name, quantity)')
+        .eq('business_id', business.id)
+        .eq('original_invoice_id', invoice.id)
+        .is('deleted_at', null);
+      priorLines = (priorNotes || []).flatMap((note: any) => note.invoice_items || []);
+    }
+    const { remainingCorrectableQuantities } = await import('@/lib/correction-notes');
+    const remaining = remainingCorrectableQuantities(lines, priorLines);
+    setCorrectionSelections(
+      lines.map((item) => {
+        const key = item.id || `${item.item_id || 'none'}::${item.name}`;
+        const maxQuantity = remaining.get(key) ?? Number(item.quantity || 0);
+        return {
+          sourceLineId: item.id,
+          item_id: item.item_id,
+          name: item.name,
+          unit: item.unit,
+          hsn_code: item.hsn_code,
+          quantity: maxQuantity,
+          rate: Number(item.rate || 0),
+          discount_pct: Number(item.discount_pct || 0),
+          tax_type: item.tax_type,
+          vat_rate: Number(item.vat_rate || 0),
+          maxQuantity,
+          selected: maxQuantity > 0,
+        };
+      }).filter((line) => line.maxQuantity > 0)
+    );
+    setCorrectionOpen(true);
+  };
+
+  const handleCorrectionNote = async () => {
+    try {
+      const selections = correctionSelections
+        .filter((line) => line.selected && line.quantity > 0)
+        .map(({ selected: _selected, ...line }) => line);
+      const newId = await createCorrectionNote.mutateAsync({
+        originalInvoiceId: id!,
+        noteType: correctionType,
+        reason: correctionReason,
+        category: correctionCategory,
+        selections,
+      });
+      toast({ title: correctionType === 'credit' ? 'Draft credit note created' : 'Draft debit note created' });
+      setCorrectionOpen(false);
+      setCorrectionReason('');
+      navigate(`/invoices/${newId}/edit`);
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    }
+  };
 
   const handlePrint = () => {
     if (id) {
@@ -265,7 +339,7 @@ export default function InvoiceDetailPage() {
               className="gap-1.5 text-xs"
               onClick={() => {
                 setCorrectionType(invoice.type === 'purchase' ? 'debit' : 'credit');
-                setCorrectionOpen(true);
+                openCorrectionDialog();
               }}
             >
               <FilePlus2 className="h-3.5 w-3.5" /> CN / DN
@@ -570,14 +644,14 @@ export default function InvoiceDetailPage() {
       </Dialog>
 
       <Dialog open={correctionOpen} onOpenChange={setCorrectionOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Create Correction Note</DialogTitle>
             <DialogDescription>
-              This creates a draft note that references {invoice.invoice_number}; edit the note lines before issuing it. The issued invoice stays unchanged.
+              Select lines and quantities to correct for {invoice.invoice_number}. The note is created as a draft for review before issue.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto">
             <RadioGroup value={correctionType} onValueChange={(value) => setCorrectionType(value as 'credit' | 'debit')} className="grid gap-2">
               <Label className="flex cursor-pointer items-center gap-3 rounded-md border border-border p-3">
                 <RadioGroupItem value="credit" />
@@ -595,6 +669,63 @@ export default function InvoiceDetailPage() {
               </Label>
             </RadioGroup>
             <div className="space-y-2">
+              <Label className="text-xs">Category</Label>
+              <RadioGroup
+                value={correctionCategory}
+                onValueChange={(value) => setCorrectionCategory(value as 'return' | 'rate_adjustment' | 'other')}
+                className="flex flex-wrap gap-3"
+              >
+                <Label className="flex items-center gap-2 text-xs"><RadioGroupItem value="return" /> Return</Label>
+                <Label className="flex items-center gap-2 text-xs"><RadioGroupItem value="rate_adjustment" /> Rate adjustment</Label>
+                <Label className="flex items-center gap-2 text-xs"><RadioGroupItem value="other" /> Other</Label>
+              </RadioGroup>
+            </div>
+            <div className="rounded-md border border-border overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left">Use</th>
+                    <th className="px-2 py-1.5 text-left">Item</th>
+                    <th className="px-2 py-1.5 text-right">Qty</th>
+                    <th className="px-2 py-1.5 text-right">Max</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {correctionSelections.map((line, index) => (
+                    <tr key={line.sourceLineId || `${line.name}-${index}`} className="border-t border-border">
+                      <td className="px-2 py-1.5">
+                        <input
+                          type="checkbox"
+                          checked={line.selected}
+                          onChange={(e) => {
+                            const selected = e.target.checked;
+                            setCorrectionSelections((prev) => prev.map((row, i) => i === index ? { ...row, selected } : row));
+                          }}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5 text-foreground">{line.name}</td>
+                      <td className="px-2 py-1.5 text-right">
+                        <input
+                          type="number"
+                          min={0}
+                          max={line.maxQuantity}
+                          step="any"
+                          value={line.quantity}
+                          disabled={!line.selected}
+                          className="w-20 rounded border border-input bg-background px-1 py-0.5 text-right"
+                          onChange={(e) => {
+                            const quantity = Math.min(line.maxQuantity, Math.max(0, Number(e.target.value) || 0));
+                            setCorrectionSelections((prev) => prev.map((row, i) => i === index ? { ...row, quantity } : row));
+                          }}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-muted-foreground">{line.maxQuantity}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="space-y-2">
               <Label className="text-xs">Reason *</Label>
               <Textarea
                 value={correctionReason}
@@ -605,7 +736,14 @@ export default function InvoiceDetailPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCorrectionOpen(false)}>Cancel</Button>
-            <Button onClick={handleCorrectionNote} disabled={!correctionReason.trim() || createCorrectionNote.isPending}>
+            <Button
+              onClick={handleCorrectionNote}
+              disabled={
+                !correctionReason.trim()
+                || createCorrectionNote.isPending
+                || !correctionSelections.some((line) => line.selected && line.quantity > 0)
+              }
+            >
               Create Note
             </Button>
           </DialogFooter>

@@ -57,6 +57,13 @@ export interface VATReturnSummary {
   refundReason: string;
   accountantReviewPlaceholders: string[];
   netVATPayable: number;
+  adjustments: VATReturnAdjustmentInput[];
+}
+
+export interface VATReturnAdjustmentInput {
+  field_key: string;
+  amount: number;
+  note?: string | null;
 }
 
 function exemptAmountForInvoice(invoice: VATReturnInvoiceInput): number {
@@ -67,9 +74,55 @@ function exemptAmountForInvoice(invoice: VATReturnInvoiceInput): number {
     .reduce((sum, item) => sum + Number(item.total_amount), 0);
 }
 
+export function applyVATReturnAdjustments(
+  summary: Omit<VATReturnSummary, "adjustments"> & { adjustments?: VATReturnAdjustmentInput[] },
+  adjustments: VATReturnAdjustmentInput[] = []
+): VATReturnSummary {
+  const next = {
+    ...summary,
+    purchaseBuckets: {
+      local_taxable_purchase: { ...summary.purchaseBuckets.local_taxable_purchase },
+      import_taxable_purchase: { ...summary.purchaseBuckets.import_taxable_purchase },
+      capitalized_taxable_purchase: { ...summary.purchaseBuckets.capitalized_taxable_purchase },
+    },
+    adjustments: [...adjustments],
+  };
+
+  let refundOverride: string | null = null;
+  for (const adj of adjustments) {
+    const amount = Number(adj.amount) || 0;
+    if (adj.field_key === "import_taxable") {
+      next.purchaseBuckets.import_taxable_purchase.amount += amount;
+    } else if (adj.field_key === "capitalized_taxable") {
+      next.purchaseBuckets.capitalized_taxable_purchase.amount += amount;
+    } else if (adj.field_key === "import_vat") {
+      next.purchaseBuckets.import_taxable_purchase.vat += amount;
+    } else if (adj.field_key === "capitalized_vat") {
+      next.purchaseBuckets.capitalized_taxable_purchase.vat += amount;
+    } else if (adj.field_key === "refund_reason" && adj.note) {
+      refundOverride = adj.note;
+    }
+  }
+
+  if (refundOverride) {
+    next.refundReason = refundOverride;
+  }
+
+  next.accountantReviewPlaceholders = [
+    "This Schedule 10 pack is a review aid — not an IRD filing submission.",
+    ...summary.accountantReviewPlaceholders.filter((p) => !p.includes("Payment voucher")),
+    ...adjustments
+      .filter((adj) => adj.field_key === "payment_voucher_ref" && adj.note)
+      .map((adj) => `Payment voucher ref: ${adj.note}`),
+  ];
+
+  return next as VATReturnSummary;
+}
+
 export function calculateVATReturnSummary(
   invoices: VATReturnInvoiceInput[],
-  paymentDetails: VATReturnPaymentDetail[] = []
+  paymentDetails: VATReturnPaymentDetail[] = [],
+  adjustments: VATReturnAdjustmentInput[] = []
 ): VATReturnSummary {
   let salesTaxable = 0, salesVAT = 0, salesExempt = 0;
   let purchaseTaxable = 0, purchaseVAT = 0, purchaseExempt = 0;
@@ -142,7 +195,7 @@ export function calculateVATReturnSummary(
   const netVATPayable = netSalesVAT - netPurchaseVAT;
   const refundReason = netVATPayable < 0 ? "Accountant review required before claiming refund." : "Not applicable";
 
-  return {
+  const base = {
     sections: [
       { label: "Taxable Sales", amount: salesTaxable, vat: salesVAT },
       { label: "Exempt Sales", amount: salesExempt, vat: 0 },
@@ -165,4 +218,6 @@ export function calculateVATReturnSummary(
     ],
     netVATPayable,
   };
+
+  return applyVATReturnAdjustments(base, adjustments);
 }

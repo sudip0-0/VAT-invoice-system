@@ -25,6 +25,8 @@ import CorrectionNotesPage from "./pages/CorrectionNotesPage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
 import PaymentsPage from "./pages/PaymentsPage";
+import ExpensesPage from "./pages/ExpensesPage";
+import TemplatesPage from "./pages/TemplatesPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
@@ -96,6 +98,12 @@ function AppRoutes() {
       } />
       <Route path="/payments" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><PaymentsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
+      } />
+      <Route path="/expenses" element={
+        <ProtectedRoute><RequireBusiness><DashboardLayout><ExpensesPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
+      } />
+      <Route path="/templates" element={
+        <ProtectedRoute><RequireBusiness><DashboardLayout><TemplatesPage /></DashboardLayout></RequireBusiness></ProtectedRoute>
       } />
       <Route path="/settings" element={
         <ProtectedRoute><RequireBusiness><DashboardLayout><SettingsPage /></DashboardLayout></RequireBusiness></ProtectedRoute>

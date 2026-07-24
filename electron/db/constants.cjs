@@ -13,6 +13,8 @@ const QUERYABLE_TABLES = new Set([
   "payments",
   "expenses",
   "stock_movements",
+  "vat_return_adjustments",
+  "document_templates",
 ]);
 
 const TABLES_WITH_BUSINESS_ID = new Set([
@@ -28,6 +30,8 @@ const TABLES_WITH_BUSINESS_ID = new Set([
   "payments",
   "expenses",
   "stock_movements",
+  "vat_return_adjustments",
+  "document_templates",
 ]);
 
 const CHILD_OWNERSHIP = {

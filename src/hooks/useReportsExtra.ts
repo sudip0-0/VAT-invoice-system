@@ -322,7 +322,7 @@ export function useVATReturnSummary(dateFrom: string, dateTo: string) {
     queryKey: ['report-vat-return', business?.id, dateFrom, dateTo],
     enabled: !!business?.id && !!dateFrom && !!dateTo,
     queryFn: async () => {
-      const [{ data, error }, { data: payments, error: paymentError }] = await Promise.all([
+      const [{ data, error }, { data: payments, error: paymentError }, { data: adjustments, error: adjError }] = await Promise.all([
         localDb
           .from('invoices')
           .select('type, is_vat_invoice, taxable_amount, vat_amount, total_amount, invoice_items(tax_type, total_amount)')
@@ -339,9 +339,16 @@ export function useVATReturnSummary(dateFrom: string, dateTo: string) {
           .gte('payment_date_ad', dateFrom)
           .lte('payment_date_ad', dateTo)
           .order('payment_date_ad'),
+        localDb
+          .from('vat_return_adjustments')
+          .select('field_key, amount, note')
+          .eq('business_id', business!.id)
+          .eq('period_from_ad', dateFrom)
+          .eq('period_to_ad', dateTo),
       ]);
       if (error) throw error;
       if (paymentError) throw paymentError;
+      if (adjError) throw adjError;
 
       const paymentDetails: VATReturnPaymentDetail[] = (payments || []).map((payment: any) => ({
         date_bs: payment.payment_date_bs,
@@ -352,7 +359,15 @@ export function useVATReturnSummary(dateFrom: string, dateTo: string) {
         cheque_number: payment.cheque_number || null,
       }));
 
-      return calculateVATReturnSummary((data || []) as any, paymentDetails);
+      return calculateVATReturnSummary(
+        (data || []) as any,
+        paymentDetails,
+        (adjustments || []).map((row: any) => ({
+          field_key: row.field_key,
+          amount: Number(row.amount) || 0,
+          note: row.note,
+        }))
+      );
     },
   });
 }

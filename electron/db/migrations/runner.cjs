@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function runLegacyColumnMigrations({ columnExists, runStatement, quoteIdentifier }) {
   const addColumnIfMissing = (table, column, definition) => {

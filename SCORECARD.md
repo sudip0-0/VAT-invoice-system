@@ -8,7 +8,7 @@ Gate commands: `npm test`, `npm run lint`, `npx tsc --noEmit`.
 | Dimension | Baseline | Current | Target |
 |---|---:|---:|---:|
 | Security | 60 | **96** | ≥95 |
-| Architecture | 68 | **95** | ≥95 |
+| Architecture | 68 | **96** | ≥95 |
 | Coding practices | 62 | **95** | ≥95 |
 | System design | 54 | **96** | ≥95 |
 | UI/UX | 65 | **95** | ≥95 |
@@ -20,7 +20,7 @@ Gate commands: `npm test`, `npm run lint`, `npx tsc --noEmit`.
 | AuthN / AuthZ | 9 | 19 | ≥18 | Session + membership in `electron/db/index.cjs` `query` / `applyMembershipScope`; tests in `src/test/electron-db-authz.test.ts` |
 | Input validation | 12 | 18 | ≥16 | Zod `src/lib/schemas/auth.ts`; table allowlist; openExternal allowlist; VAT preflight |
 | Secrets handling | 15 | 18 | ≥16 | scrypt; current-password on change; backup credential warning in Settings/TESTER_GUIDE |
-| Data protection | 10 | 19 | ≥18 | CSP + sandbox in `electron/main.cjs`; atomic flush; backup sha256 + pre-restore copy |
+| Data protection | 10 | 19 | ≥18 | CSP + sandbox in `electron/main.cjs`; atomic flush; AES-GCM encrypted backups + sha256 + pre-restore copy |
 | Dependency / Electron risk | 14 | 18 | ≥17 | contextIsolation; sandbox true; http(s)-only external |
 
 ## Architecture (5 × 20) — 95
@@ -30,7 +30,7 @@ Gate commands: `npm test`, `npm run lint`, `npx tsc --noEmit`.
 | Separation of concerns | 16 | 18 | ≥18 | `constants.cjs`, `migrations/runner.cjs`, logger, security helper, DocumentEditor |
 | Scalability | 11 | 17 | ≥16 | Desktop-local; sequences; indexed lists; pagination retained |
 | API design | 13 | 19 | ≥18 | Typed `documents`/`stock` IPC; membership-scoped query |
-| Data modeling | 17 | 18 | ≥18 | schema.sql + schema_version |
+| Data modeling | 17 | 19 | ≥18 | schema.sql + schema_version 2 (`vat_return_adjustments`, `document_templates`) |
 | Extensibility | 11 | 18 | ≥17 | DocumentEditor + document-lines; migrations runner |
 
 ## Coding practices (5 × 20) — 95

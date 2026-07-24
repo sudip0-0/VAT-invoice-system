@@ -145,6 +145,31 @@ export interface ExpenseRow {
   updated_at: string;
 }
 
+export interface VatReturnAdjustmentRow {
+  amount: number;
+  business_id: string;
+  created_at: string;
+  field_key: string;
+  id: string;
+  note: string | null;
+  period_from_ad: string;
+  period_to_ad: string;
+  updated_at: string;
+}
+
+export interface DocumentTemplateRow {
+  business_id: string;
+  created_at: string;
+  deleted_at: string | null;
+  document_type: string;
+  id: string;
+  name: string;
+  next_run_ad: string | null;
+  payload: string;
+  schedule: string;
+  updated_at: string;
+}
+
 export interface ItemCategoryRow {
   business_id: string;
   created_at: string;
@@ -253,6 +278,7 @@ export interface TaxRateRow {
 export interface TableRowMap {
   business_users: BusinessUserRow;
   document_sequences: DocumentSequenceRow;
+  document_templates: DocumentTemplateRow;
   businesses: BusinessRow;
   expenses: ExpenseRow;
   invoice_events: InvoiceEventRow;
@@ -265,6 +291,7 @@ export interface TableRowMap {
   profiles: ProfileRow;
   stock_movements: StockMovementRow;
   tax_rates: TaxRateRow;
+  vat_return_adjustments: VatReturnAdjustmentRow;
 }
 
 export type Tables<Name extends keyof TableRowMap> = TableRowMap[Name];

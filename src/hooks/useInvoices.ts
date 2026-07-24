@@ -510,7 +510,32 @@ export function useInvoices() {
   });
 
   const createCorrectionNote = useMutation({
-    mutationFn: async ({ originalInvoiceId, noteType, reason }: { originalInvoiceId: string; noteType: 'credit' | 'debit'; reason: string }) => {
+    mutationFn: async ({
+      originalInvoiceId,
+      noteType,
+      reason,
+      category = 'other',
+      selections,
+    }: {
+      originalInvoiceId: string;
+      noteType: 'credit' | 'debit';
+      reason: string;
+      category?: 'return' | 'rate_adjustment' | 'other';
+      selections?: Array<{
+        sourceLineId?: string;
+        item_id?: string | null;
+        name: string;
+        unit?: string | null;
+        hsn_code?: string | null;
+        quantity: number;
+        rate: number;
+        discount_pct?: number;
+        tax_type?: string | null;
+        vat_rate?: number | null;
+        maxQuantity: number;
+      }>;
+    }) => {
+      const { buildPartialCorrectionItems } = await import('@/lib/correction-notes');
       const correctionReason = reason.trim();
       if (!correctionReason) throw new Error('Correction reason is required');
       const { data: originalInvoice, error: originalErr } = await localDb
@@ -522,6 +547,44 @@ export function useInvoices() {
       if (originalErr) throw originalErr;
       if (!originalInvoice) throw new Error('Original invoice not found');
       if (originalInvoice.status === 'draft') throw new Error('Correction notes require an issued invoice');
+
+      const { data: priorNotes, error: priorErr } = await localDb
+        .from('invoices')
+        .select('id, invoice_items(item_id, name, quantity)')
+        .eq('business_id', business!.id)
+        .eq('original_invoice_id', originalInvoiceId)
+        .is('deleted_at', null);
+      if (priorErr) throw priorErr;
+
+      const priorLines = (priorNotes || []).flatMap((note: any) => note.invoice_items || []);
+      const { remainingCorrectableQuantities } = await import('@/lib/correction-notes');
+      const remaining = remainingCorrectableQuantities(originalInvoice.invoice_items || [], priorLines);
+
+      const defaultSelections = (originalInvoice.invoice_items || []).map((item: InvoiceItem) => {
+        const key = item.id || `${item.item_id || 'none'}::${item.name}`;
+        const maxQuantity = remaining.get(key) ?? Number(item.quantity || 0);
+        return {
+          sourceLineId: item.id,
+          item_id: item.item_id,
+          name: item.name,
+          unit: item.unit,
+          hsn_code: item.hsn_code,
+          quantity: maxQuantity,
+          rate: item.rate,
+          discount_pct: item.discount_pct,
+          tax_type: item.tax_type,
+          vat_rate: item.vat_rate,
+          maxQuantity,
+        };
+      }).filter((line) => line.maxQuantity > 0);
+
+      const chosen = (selections && selections.length > 0 ? selections : defaultSelections)
+        .map((line) => ({
+          ...line,
+          maxQuantity: line.maxQuantity ?? remaining.get(line.sourceLineId || `${line.item_id || 'none'}::${line.name}`) ?? line.quantity,
+        }));
+
+      const { lines, totals } = buildPartialCorrectionItems(chosen);
 
       const correctionType = noteType === 'credit' ? 'sale_return' : 'purchase_return';
       const newId = await createInvoice.mutateAsync({
@@ -543,35 +606,21 @@ export function useInvoices() {
           due_date_ad: null,
           due_date_bs: null,
           vat_period: originalInvoice.is_vat_invoice ? getVATPeriod(todayBS()) : null,
-          sub_total: originalInvoice.sub_total,
-          discount_amount: originalInvoice.discount_amount,
-          taxable_amount: originalInvoice.taxable_amount,
-          vat_amount: originalInvoice.vat_amount,
-          total_amount: originalInvoice.total_amount,
+          sub_total: totals.sub_total ?? totals.taxable_amount,
+          discount_amount: totals.discount_amount,
+          taxable_amount: totals.taxable_amount,
+          vat_amount: totals.vat_amount,
+          total_amount: totals.total_amount,
           paid_amount: 0,
           balance_due: 0,
           original_invoice_id: originalInvoice.id,
           original_invoice_number: originalInvoice.invoice_number,
-          correction_reason: correctionReason,
+          correction_reason: `${category}: ${correctionReason}`,
           correction_type: noteType,
           notes: correctionReason,
           reference_number: originalInvoice.invoice_number,
         },
-        items: (originalInvoice.invoice_items || []).map((item: InvoiceItem) => ({
-          item_id: item.item_id,
-          hsn_code: item.hsn_code,
-          name: item.name,
-          unit: item.unit,
-          quantity: item.quantity,
-          rate: item.rate,
-          discount_pct: item.discount_pct,
-          discount_amt: item.discount_amt,
-          tax_type: item.tax_type,
-          vat_rate: item.vat_rate,
-          taxable_amount: item.taxable_amount,
-          vat_amount: item.vat_amount,
-          total_amount: item.total_amount,
-        })),
+        items: lines,
       });
 
       await logInvoiceEvent({
@@ -579,7 +628,7 @@ export function useInvoices() {
         invoiceId: originalInvoice.id,
         userId: user?.id,
         action: noteType === 'credit' ? 'credit_note_created' : 'debit_note_created',
-        details: { note_invoice_id: newId, reason: correctionReason, status: 'draft_for_line_review' },
+        details: { note_invoice_id: newId, reason: correctionReason, category, status: 'draft_for_line_review', line_count: lines.length },
       });
 
       return newId;

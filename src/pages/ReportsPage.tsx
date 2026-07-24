@@ -12,6 +12,7 @@ import {
   useItemWiseSalesPurchase, useLowStockAlert, useDayBook, useCNDNRegister,
   useOutstandingReport, useVATReturnSummary, useDailySummary, useFiscalSequenceReview,
 } from '@/hooks/useReportsExtra';
+import { useVATReturnAdjustments, VAT_ADJUSTMENT_FIELDS } from '@/hooks/useVATReturnAdjustments';
 import {
   useTrialBalance, useBalanceSheetSummary, useTopSellingItems, useVATAnnex,
 } from '@/hooks/useReportsExtra2';
@@ -22,6 +23,7 @@ import { formatNPR } from '@/lib/nepal-format';
 import { nepalNow, formatLocalDate } from '@/lib/nepal-date';
 import { adToBS, formatBSShort, getVATReturnDeadline } from '@/lib/bs-calendar';
 import { useToast } from '@/hooks/use-toast';
+import { useBusiness } from '@/contexts/BusinessContext';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, Legend, Cell,
@@ -177,6 +179,7 @@ const REPORT_CATEGORIES: ReportCategory[] = [
     id: 'tax',
     label: '🧾 Tax & Compliance',
     reports: [
+      { key: 'vat-review-pack', label: 'VAT Filing Review Pack' },
       { key: 'vat', label: 'VAT Summary' },
       { key: 'vat-return', label: 'VAT Return (Schedule 10)' },
       { key: 'vat-annex', label: 'Purchase/Sales Books (Schedule 8/9)' },
@@ -302,6 +305,7 @@ export default function ReportsPage() {
         <div className="flex-1 min-w-0">
           {activeReport === 'sales' && <SalesReport dateFrom={dateFrom} dateTo={dateTo} />}
           {activeReport === 'item-wise' && <ItemWiseReport dateFrom={dateFrom} dateTo={dateTo} />}
+          {activeReport === 'vat-review-pack' && <VATReviewPack dateFrom={dateFrom} dateTo={dateTo} />}
           {activeReport === 'vat' && <VATReport dateFrom={dateFrom} dateTo={dateTo} />}
           {activeReport === 'vat-return' && <VATReturnReport dateFrom={dateFrom} dateTo={dateTo} />}
           {activeReport === 'sequence-review' && <FiscalSequenceReviewReport />}
@@ -382,6 +386,114 @@ function SalesReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string })
           <td className="px-3 py-2 text-right font-semibold text-muted-foreground">{formatNPR(totals.vat, { showSymbol: false })}</td>
           <td className="px-3 py-2 text-right font-bold text-foreground">{formatNPR(totals.total, { showSymbol: false })}</td>
         </tr></tfoot>
+      </ReportTable>
+    </div>
+  );
+}
+
+function VATReviewPack({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
+  const { business } = useBusiness();
+  const vatReturn = useVATReturnSummary(dateFrom, dateTo);
+  const salesBook = useVATAnnex(dateFrom, dateTo, 'sales');
+  const purchaseBook = useVATAnnex(dateFrom, dateTo, 'purchases');
+  const cndn = useCNDNRegister(dateFrom, dateTo);
+  const sequenceReview = useFiscalSequenceReview();
+  const isLoading = vatReturn.isLoading || salesBook.isLoading || purchaseBook.isLoading || cndn.isLoading || sequenceReview.isLoading;
+  const placeholders = vatReturn.data?.accountantReviewPlaceholders || [];
+
+  const handleExport = () => {
+    const rows: string[][] = [
+      ['VAT Filing Review Pack', dateFrom, dateTo, business?.pan_number || 'Accountant review'],
+      [],
+      ['VAT Return Aid', 'Amount', 'VAT'],
+      ...(vatReturn.data?.sections || []).map((row) => [row.label, String(row.amount), String(row.vat)]),
+      ['Net VAT Payable', '', String(vatReturn.data?.netVATPayable || 0)],
+      [],
+      ['Document Counts', 'Count'],
+      ...Object.entries(vatReturn.data?.counts || {}).map(([key, value]) => [key, String(value)]),
+      [],
+      ['Sales Book', 'Fiscal Year', 'VAT Period', 'Taxpayer PAN', 'Serial', 'Invoice #', 'Date', 'Buyer PAN', 'Buyer Name', 'Total', 'Exempt', 'Taxable', 'VAT'],
+      ...(salesBook.data?.rows || []).map((row) => ['', row.fiscal_year, row.vat_period, row.taxpayer_pan, String(row.document_serial || ''), row.invoice_number, row.date_bs, row.buyer_pan, row.buyer_name, String(row.total_sales), String(row.exempt_sales), String(row.taxable_amount), String(row.vat_amount)]),
+      [],
+      ['Purchase Book', 'Fiscal Year', 'VAT Period', 'Taxpayer PAN', 'Serial', 'Invoice #', 'Date', 'Supplier PAN', 'Supplier Name', 'Total', 'Exempt', 'Taxable', 'VAT'],
+      ...(purchaseBook.data?.rows || []).map((row) => ['', row.fiscal_year, row.vat_period, row.taxpayer_pan, String(row.document_serial || ''), row.invoice_number, row.date_bs, row.buyer_pan, row.buyer_name, String(row.total_sales), String(row.exempt_sales), String(row.taxable_amount), String(row.vat_amount)]),
+      [],
+      ['CN/DN Register', 'Date', 'Note #', 'Original #', 'Fiscal Year', 'Party', 'Type', 'Taxable', 'VAT', 'Total', 'Status'],
+      ...(cndn.data?.rows || []).map((row) => ['', row.date_bs, row.invoice_number, row.original_invoice_number, row.fiscal_year, row.party_name, row.type, String(row.taxable_amount), String(row.vat_amount), String(row.total_amount), row.status]),
+      [],
+      ['Sequence Exceptions', 'Type', 'Fiscal Year', 'Serial', 'Invoice #', 'Message'],
+      ...(sequenceReview.data || []).map((issue) => ['', issue.document_type, issue.fiscal_year, String(issue.serial || ''), issue.invoice_number || '', issue.message]),
+      [],
+      ['Accountant Review Items'],
+      ...placeholders.map((placeholder) => [placeholder]),
+    ];
+    exportCSV(['Section', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'], rows, `vat-filing-review-pack-${dateFrom}-${dateTo}.csv`);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">VAT Filing Review Pack</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Accountant review aid for {dateFrom} to {dateTo}. This is not an official filing or IRD certification.
+          </p>
+        </div>
+        <ExportButton onClick={handleExport} disabled={isLoading} />
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="rounded-lg border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">Taxpayer PAN</p>
+          <p className="mt-1 text-sm font-semibold text-foreground">{business?.pan_number || 'Accountant review'}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">Net VAT Payable</p>
+          <p className="mt-1 text-sm font-semibold text-foreground">{formatNPR(vatReturn.data?.netVATPayable || 0)}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">Documents</p>
+          <p className="mt-1 text-sm font-semibold text-foreground">{vatReturn.data?.counts.total_document_count || 0}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">Sequence Exceptions</p>
+          <p className="mt-1 text-sm font-semibold text-foreground">{sequenceReview.data?.length || 0}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h4 className="text-xs font-semibold text-foreground">Pack Contents</h4>
+          <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
+            <div>VAT return aid: {vatReturn.data?.sections.length || 0} rows</div>
+            <div>Sales book rows: {salesBook.data?.rows.length || 0}</div>
+            <div>Purchase book rows: {purchaseBook.data?.rows.length || 0}</div>
+            <div>CN/DN rows: {cndn.data?.rows.length || 0}</div>
+          </div>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h4 className="text-xs font-semibold text-foreground">Accountant Review Items</h4>
+          <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
+            {(placeholders.length ? placeholders : ['No review placeholders loaded yet.']).map((item) => (
+              <div key={item}>{item}</div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <ReportTable loading={isLoading} empty={!vatReturn.data}>
+        <thead><tr className="border-b border-border bg-muted/50">
+          <th className="px-3 py-2 text-left font-medium text-muted-foreground">VAT Return Aid Row</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Amount</th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">VAT</th>
+        </tr></thead>
+        <tbody>{(vatReturn.data?.sections || []).map((row) => (
+          <tr key={row.label} className="border-b border-border last:border-0">
+            <td className="px-3 py-2 text-foreground">{row.label}</td>
+            <td className="px-3 py-2 text-right text-foreground">{formatNPR(row.amount, { showSymbol: false })}</td>
+            <td className="px-3 py-2 text-right text-foreground">{formatNPR(row.vat, { showSymbol: false })}</td>
+          </tr>
+        ))}</tbody>
       </ReportTable>
     </div>
   );
@@ -1268,9 +1380,14 @@ function OutstandingReportView({ dateFrom, dateTo }: { dateFrom: string; dateTo:
 // ───────── VAT Return Summary ─────────
 function VATReturnReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
   const { data, isLoading } = useVATReturnSummary(dateFrom, dateTo);
+  const { data: adjustments = [], upsertAdjustment, deleteAdjustment } = useVATReturnAdjustments(dateFrom, dateTo);
+  const { toast } = useToast();
+  const [adjForm, setAdjForm] = useState({ field_key: 'import_taxable', amount: '', note: '' });
+
   const handleExport = () => {
     if (!data) return;
     const rows = [
+      ['REVIEW AID', '', '', 'This export is an accountant review aid — not an IRD filing submission.'],
       ...data.sections.map((row) => [row.label, String(row.amount), String(row.vat), '']),
       ...Object.values(data.purchaseBuckets).map((row) => [row.label, String(row.amount), String(row.vat), 'Purchase bucket']),
       ['VAT Payable / Refundable', '', String(data.netVATPayable), data.refundReason],
@@ -1280,9 +1397,29 @@ function VATReturnReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: strin
         '',
         [payment.method, payment.reference, payment.bank_name, payment.cheque_number].filter(Boolean).join(' / '),
       ]),
+      ...(data.adjustments || []).map((adj) => [
+        `Adjustment:${adj.field_key}`,
+        String(adj.amount),
+        '',
+        adj.note || '',
+      ]),
       ...data.accountantReviewPlaceholders.map((placeholder) => ['Accountant Review', '', '', placeholder]),
     ];
     exportCSV(['Particulars', 'Amount', 'VAT', 'Details'], rows, `vat-return-schedule-10-${dateFrom}-${dateTo}.csv`);
+  };
+
+  const handleAddAdjustment = async () => {
+    try {
+      await upsertAdjustment.mutateAsync({
+        field_key: adjForm.field_key,
+        amount: Number(adjForm.amount) || 0,
+        note: adjForm.note.trim() || null,
+      });
+      setAdjForm({ field_key: 'import_taxable', amount: '', note: '' });
+      toast({ title: 'Adjustment saved' });
+    } catch (error) {
+      toast({ title: 'Could not save adjustment', description: error instanceof Error ? error.message : 'Try again', variant: 'destructive' });
+    }
   };
 
   if (isLoading) return <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">Loading…</div>;
@@ -1290,9 +1427,12 @@ function VATReturnReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: strin
 
   return (
     <div className="space-y-4 max-w-4xl">
+      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-foreground">
+        Schedule 10 review aid only. Export and review with an accountant before filing; this does not submit or certify a VAT return.
+      </div>
       <div className="flex items-start gap-3">
         <p className="text-xs text-muted-foreground max-w-2xl">
-          Schedule 10 pre-filing review. Export and review with an accountant before filing; this does not submit or certify a VAT return.
+          Includes issued documents for the selected period plus accountant adjustments stored for this date range.
         </p>
         <ExportButton onClick={handleExport} disabled={!data.sections.length} />
       </div>
@@ -1347,7 +1487,7 @@ function VATReturnReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: strin
                 <tr key={row.label} className="border-b border-border last:border-0">
                   <td className="px-4 py-2 text-foreground">{row.label}</td>
                   <td className="px-4 py-2 text-right text-foreground">{formatNPR(row.amount, { showSymbol: false })}</td>
-                  <td className="px-4 py-2 text-right text-muted-foreground">{row.vat ? formatNPR(row.vat, { showSymbol: false }) : 'â€”'}</td>
+                  <td className="px-4 py-2 text-right text-muted-foreground">{row.vat ? formatNPR(row.vat, { showSymbol: false }) : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -1373,9 +1513,50 @@ function VATReturnReport({ dateFrom, dateTo }: { dateFrom: string; dateTo: strin
           )}
         </div>
       </div>
-      <div className="rounded-lg border border-border bg-card p-4 space-y-2">
-        <div className="text-xs font-semibold text-foreground">Accountant Review Placeholders</div>
-        <div className="grid gap-1.5 text-xs text-muted-foreground">
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div>
+          <div className="text-xs font-semibold text-foreground">Accountant Adjustments</div>
+          <p className="text-[11px] text-muted-foreground">Manual Schedule 10 fields for imports, capitalized purchases, voucher refs, and refund notes.</p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-4">
+          <div className="sm:col-span-2">
+            <Label className="text-xs">Field</Label>
+            <select
+              className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+              value={adjForm.field_key}
+              onChange={(e) => setAdjForm((f) => ({ ...f, field_key: e.target.value }))}
+            >
+              {VAT_ADJUSTMENT_FIELDS.map((field) => (
+                <option key={field.key} value={field.key}>{field.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="text-xs">Amount</Label>
+            <Input className="h-8 text-xs" type="number" value={adjForm.amount} onChange={(e) => setAdjForm((f) => ({ ...f, amount: e.target.value }))} />
+          </div>
+          <div>
+            <Label className="text-xs">Note / Ref</Label>
+            <Input className="h-8 text-xs" value={adjForm.note} onChange={(e) => setAdjForm((f) => ({ ...f, note: e.target.value }))} />
+          </div>
+        </div>
+        <Button size="sm" className="text-xs" onClick={handleAddAdjustment} disabled={upsertAdjustment.isPending}>Add Adjustment</Button>
+        <div className="space-y-2">
+          {adjustments.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No adjustments for this period.</p>
+          ) : adjustments.map((adj) => (
+            <div key={adj.id} className="flex items-start justify-between gap-2 rounded-md border border-border p-2 text-xs">
+              <div>
+                <p className="font-medium text-foreground">{adj.field_key}</p>
+                <p className="text-muted-foreground">{adj.note || '—'} · {formatNPR(Number(adj.amount), { showSymbol: false })}</p>
+              </div>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteAdjustment.mutate(adj.id)}>
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-1.5 text-xs text-muted-foreground border-t border-border pt-2">
           <div>Refund reason: {data.refundReason}</div>
           {data.accountantReviewPlaceholders.map((placeholder) => <div key={placeholder}>{placeholder}</div>)}
         </div>

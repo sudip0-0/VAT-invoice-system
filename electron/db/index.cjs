@@ -561,6 +561,27 @@ function applyInsertDefaults(table, rawPayload) {
         created_at: timestamp,
         ...payload,
       };
+    case "vat_return_adjustments":
+      return {
+        ...base,
+        amount: 0,
+        note: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+        ...payload,
+      };
+    case "document_templates":
+      return {
+        ...base,
+        document_type: "sale",
+        payload: "{}",
+        schedule: "none",
+        next_run_ad: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+        deleted_at: null,
+        ...payload,
+      };
     default:
       return { ...base, ...payload };
   }
@@ -1324,16 +1345,79 @@ function sha256FileBuffer(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
-function createBackup(filePath) {
+const BACKUP_MAGIC = Buffer.from("VYENC1");
+
+function deriveBackupKey(passphrase, salt) {
+  return crypto.scryptSync(String(passphrase), salt, 32);
+}
+
+function encryptBackupBuffer(plainBuffer, passphrase) {
+  if (!passphrase || String(passphrase).length < 8) {
+    throw new Error("Backup passphrase must be at least 8 characters");
+  }
+  const salt = crypto.randomBytes(16);
+  const iv = crypto.randomBytes(12);
+  const key = deriveBackupKey(passphrase, salt);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plainBuffer), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([BACKUP_MAGIC, salt, iv, tag, encrypted]);
+}
+
+function decryptBackupBuffer(fileBuffer, passphrase) {
+  if (!passphrase) {
+    throw new Error("Passphrase required for encrypted backup");
+  }
+  if (fileBuffer.length < BACKUP_MAGIC.length + 16 + 12 + 16) {
+    throw new Error("Invalid encrypted backup file");
+  }
+  const magic = fileBuffer.subarray(0, BACKUP_MAGIC.length);
+  if (!magic.equals(BACKUP_MAGIC)) {
+    throw new Error("Not an encrypted Vyapar backup");
+  }
+  let offset = BACKUP_MAGIC.length;
+  const salt = fileBuffer.subarray(offset, offset + 16);
+  offset += 16;
+  const iv = fileBuffer.subarray(offset, offset + 12);
+  offset += 12;
+  const tag = fileBuffer.subarray(offset, offset + 16);
+  offset += 16;
+  const encrypted = fileBuffer.subarray(offset);
+  const key = deriveBackupKey(passphrase, salt);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  try {
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  } catch {
+    throw new Error("Incorrect passphrase or corrupted backup");
+  }
+}
+
+function isEncryptedBackupBuffer(buffer) {
+  return buffer.length >= BACKUP_MAGIC.length && buffer.subarray(0, BACKUP_MAGIC.length).equals(BACKUP_MAGIC);
+}
+
+function createBackup(filePath, options = {}) {
   try {
     ensureInitialized();
     assertSession();
+    const passphrase = options?.passphrase;
+    const unencrypted = options?.unencrypted === true;
     const exported = Buffer.from(db.export());
-    fs.writeFileSync(filePath, exported);
-    const checksum = sha256FileBuffer(exported);
+    let payload = exported;
+    let encrypted = false;
+    if (!unencrypted) {
+      if (!passphrase) {
+        throw new Error("Passphrase is required for encrypted backup");
+      }
+      payload = encryptBackupBuffer(exported, passphrase);
+      encrypted = true;
+    }
+    fs.writeFileSync(filePath, payload);
+    const checksum = sha256FileBuffer(payload);
     fs.writeFileSync(`${filePath}.sha256`, `${checksum}  ${path.basename(filePath)}\n`, "utf8");
-    logger.info("backup_created", { path: filePath });
-    return createResponse({ path: filePath, checksum });
+    logger.info("backup_created", { path: filePath, encrypted });
+    return createResponse({ path: filePath, checksum, encrypted });
   } catch (error) {
     logger.error("backup_failed", { message: error.message });
     return createResponse(null, error);
@@ -1353,7 +1437,7 @@ function getSchemaVersionFromDb(database) {
   }
 }
 
-function restoreBackup(filePath) {
+function restoreBackup(filePath, options = {}) {
   try {
     ensureInitialized();
     assertSession();
@@ -1362,13 +1446,17 @@ function restoreBackup(filePath) {
     }
 
     const checksumPath = `${filePath}.sha256`;
-    const fileBuffer = fs.readFileSync(filePath);
+    let fileBuffer = fs.readFileSync(filePath);
     if (fs.existsSync(checksumPath)) {
       const expected = String(fs.readFileSync(checksumPath, "utf8").split(/\s+/)[0] || "").trim();
       const actual = sha256FileBuffer(fileBuffer);
       if (!expected || expected !== actual) {
         throw new Error("Backup checksum mismatch");
       }
+    }
+
+    if (isEncryptedBackupBuffer(fileBuffer)) {
+      fileBuffer = decryptBackupBuffer(fileBuffer, options?.passphrase);
     }
 
     const candidate = new SQL.Database(fileBuffer);
@@ -1392,6 +1480,146 @@ function restoreBackup(filePath) {
     return createResponse({ path: filePath, safetyPath });
   } catch (error) {
     logger.error("backup_restore_failed", { message: error.message });
+    return createResponse(null, error);
+  }
+}
+
+function createMember(payload) {
+  try {
+    ensureInitialized();
+    const sessionUser = assertSession();
+    const { businessId, email, password, name, role = "staff" } = payload || {};
+    if (!businessId || !email || !password) {
+      throw new Error("businessId, email, and password are required");
+    }
+    assertPasswordPolicy(password);
+    assertBusinessAccess(sessionUser.id, businessId);
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const existing = readAllRows("app_users").find((row) => row.email.toLowerCase() === normalizedEmail);
+    if (existing) {
+      const alreadyMember = readFilteredRows("business_users", [
+        { type: "eq", column: "business_id", value: businessId },
+        { type: "eq", column: "user_id", value: existing.id },
+      ])[0];
+      if (alreadyMember) {
+        throw new Error("User is already a member of this business");
+      }
+      return createResponse(
+        withTransaction(() => {
+          const membership = applyInsertDefaults("business_users", {
+            business_id: businessId,
+            user_id: existing.id,
+            role: role || "staff",
+            is_active: true,
+          });
+          insertRow("business_users", membership);
+          logger.info("auth_create_member_existing", { businessId, email: normalizedEmail });
+          return { userId: existing.id, membershipId: membership.id, email: normalizedEmail, createdUser: false };
+        })
+      );
+    }
+
+    return createResponse(
+      withTransaction(() => {
+        const timestamp = nowIso();
+        const userId = crypto.randomUUID();
+        insertRow("app_users", {
+          id: userId,
+          email: normalizedEmail,
+          password_hash: hashPassword(password),
+          created_at: timestamp,
+          updated_at: timestamp,
+        });
+        insertRow(
+          "profiles",
+          applyInsertDefaults("profiles", {
+            user_id: userId,
+            name: name || "",
+          })
+        );
+        const membership = applyInsertDefaults("business_users", {
+          business_id: businessId,
+          user_id: userId,
+          role: role || "staff",
+          is_active: true,
+        });
+        insertRow("business_users", membership);
+        logger.info("auth_create_member", { businessId, email: normalizedEmail });
+        return { userId, membershipId: membership.id, email: normalizedEmail, createdUser: true };
+      })
+    );
+  } catch (error) {
+    logger.warn("auth_create_member_failed", { message: error.message });
+    return createResponse(null, error);
+  }
+}
+
+function listMembers(payload) {
+  try {
+    ensureInitialized();
+    const sessionUser = assertSession();
+    const businessId = payload?.businessId;
+    if (!businessId) throw new Error("businessId is required");
+    assertBusinessAccess(sessionUser.id, businessId);
+
+    const memberships = readFilteredRows("business_users", [
+      { type: "eq", column: "business_id", value: businessId },
+    ]);
+    const users = readAllRows("app_users");
+    const profiles = readAllRows("profiles");
+    const members = memberships.map((membership) => {
+      const user = users.find((row) => row.id === membership.user_id);
+      const profile = profiles.find((row) => row.user_id === membership.user_id);
+      return {
+        id: membership.id,
+        user_id: membership.user_id,
+        role: membership.role,
+        is_active: membership.is_active,
+        joined_at: membership.joined_at,
+        email: user?.email || "",
+        name: profile?.name || "",
+      };
+    });
+    return createResponse({ members });
+  } catch (error) {
+    return createResponse(null, error);
+  }
+}
+
+function removeMember(payload) {
+  try {
+    ensureInitialized();
+    const sessionUser = assertSession();
+    const { businessId, membershipId } = payload || {};
+    if (!businessId || !membershipId) throw new Error("businessId and membershipId are required");
+    assertBusinessAccess(sessionUser.id, businessId);
+
+    return createResponse(
+      withTransaction(() => {
+        const membership = readFilteredRows("business_users", [
+          { type: "eq", column: "id", value: membershipId },
+          { type: "eq", column: "business_id", value: businessId },
+        ])[0];
+        if (!membership) throw new Error("Membership not found");
+
+        if (membership.role === "owner") {
+          const owners = readFilteredRows("business_users", [
+            { type: "eq", column: "business_id", value: businessId },
+            { type: "eq", column: "role", value: "owner" },
+            { type: "eq", column: "is_active", value: true },
+          ]);
+          if (owners.length <= 1) {
+            throw new Error("Cannot remove the last owner");
+          }
+        }
+
+        deleteRow("business_users", membershipId);
+        logger.info("auth_remove_member", { businessId, membershipId });
+        return { removed: true };
+      })
+    );
+  } catch (error) {
     return createResponse(null, error);
   }
 }
@@ -1673,6 +1901,9 @@ module.exports = {
     signOut,
     updateUser,
     resetPasswordForEmail,
+    createMember,
+    listMembers,
+    removeMember,
   },
   backup: {
     createBackup,
@@ -1682,5 +1913,7 @@ module.exports = {
     verifyPassword,
     hashPassword,
     isAllowedExternalUrl: require("../security/open-external.cjs").isAllowedExternalUrl,
+    encryptBackupBuffer,
+    decryptBackupBuffer,
   },
 };

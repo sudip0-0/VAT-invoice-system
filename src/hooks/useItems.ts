@@ -52,7 +52,10 @@ export function useItems() {
       if (error) throw error;
       return data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: key }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
+    },
   });
 
   const updateItem = useMutation({
@@ -60,7 +63,10 @@ export function useItems() {
       const { error } = await localDb.from('items').update(updates).eq('id', id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: key }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
+    },
   });
 
   const deleteItem = useMutation({
@@ -71,7 +77,10 @@ export function useItems() {
         .eq('id', id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: key }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
+    },
   });
 
   const adjustStock = useMutation({
@@ -154,6 +163,7 @@ export function useItemList({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['item_list', business?.id] });
       qc.invalidateQueries({ queryKey: ['items', business?.id] });
+      qc.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
     },
   });
 
@@ -165,6 +175,7 @@ export function useItemList({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['item_list', business?.id] });
       qc.invalidateQueries({ queryKey: ['items', business?.id] });
+      qc.invalidateQueries({ queryKey: ['setup-readiness', business?.id] });
     },
   });
 

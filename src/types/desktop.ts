@@ -81,11 +81,38 @@ export interface DesktopApi {
       currentPassword?: string;
     }) => Promise<QueryResponse<{ user: DesktopUser; session: DesktopSession }>>;
     resetPasswordForEmail: (payload: { email: string; redirectTo?: string }) => Promise<QueryResponse<null>>;
+    createMember: (payload: {
+      businessId: string;
+      email: string;
+      password: string;
+      name?: string;
+      role?: string;
+    }) => Promise<QueryResponse<{ userId: string; membershipId: string; email: string; createdUser: boolean }>>;
+    listMembers: (payload: {
+      businessId: string;
+    }) => Promise<QueryResponse<{ members: Array<{
+      id: string;
+      user_id: string;
+      role: string;
+      is_active: boolean;
+      joined_at: string;
+      email: string;
+      name: string;
+    }> }>>;
+    removeMember: (payload: {
+      businessId: string;
+      membershipId: string;
+    }) => Promise<QueryResponse<{ removed: boolean }>>;
   };
   system: {
     openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
     openLogs: () => Promise<{ ok: boolean; path?: string; error?: string }>;
-    createBackup: () => Promise<QueryResponse<{ canceled: boolean; path?: string; checksum?: string }>>;
-    restoreBackup: () => Promise<QueryResponse<{ canceled: boolean; path?: string; safetyPath?: string }>>;
+    createBackup: (payload?: {
+      passphrase?: string;
+      unencrypted?: boolean;
+    }) => Promise<QueryResponse<{ canceled: boolean; path?: string; checksum?: string; encrypted?: boolean }>>;
+    restoreBackup: (payload?: {
+      passphrase?: string;
+    }) => Promise<QueryResponse<{ canceled: boolean; path?: string; safetyPath?: string }>>;
   };
 }

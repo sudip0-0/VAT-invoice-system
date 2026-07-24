@@ -1,8 +1,14 @@
 import { TrendingUp, TrendingDown, IndianRupee, AlertTriangle } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { formatNPR } from '@/lib/nepal-format';
 import { todayBS, getFiscalYear, formatBS } from '@/lib/bs-calendar';
 import { useDashboardData } from '@/hooks/useDashboard';
 import StatusBadge from '@/components/shared/StatusBadge';
+import SetupReadinessChecklist from '@/components/SetupReadinessChecklist';
+import { useDocumentTemplates } from '@/hooks/useDocumentTemplates';
+import { nepalTodayISO } from '@/lib/nepal-date';
+import { useToast } from '@/hooks/use-toast';
 
 const today = todayBS();
 
@@ -20,6 +26,24 @@ const accentBgMap = {
 
 export default function Dashboard() {
   const { data, isLoading } = useDashboardData();
+  const { data: templates = [] } = useDocumentTemplates();
+  const { toast } = useToast();
+  const notifiedRef = useRef(false);
+
+  useEffect(() => {
+    if (notifiedRef.current || !templates.length) return;
+    const todayAd = nepalTodayISO();
+    const due = templates.filter(
+      (template) => template.schedule === 'monthly' && template.next_run_ad && template.next_run_ad <= todayAd
+    );
+    if (due.length > 0) {
+      notifiedRef.current = true;
+      toast({
+        title: `${due.length} recurring draft${due.length === 1 ? '' : 's'} ready`,
+        description: 'Open Templates to create draft invoices from due schedules.',
+      });
+    }
+  }, [templates, toast]);
 
   const kpiCards = [
     { label: "Today's Sales", value: data?.todaySales ?? 0, icon: TrendingUp, accent: 'success' as const },
@@ -30,12 +54,17 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">
-          FY {getFiscalYear(today)} • {formatBS(today)}
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-foreground">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">
+            FY {getFiscalYear(today)} • {formatBS(today)}
+          </p>
+        </div>
+        <Link to="/templates" className="text-xs text-primary hover:underline">Templates</Link>
       </div>
+
+      <SetupReadinessChecklist compact />
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
